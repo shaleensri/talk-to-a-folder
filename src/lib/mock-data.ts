@@ -324,9 +324,73 @@ export interface MockChatResponse {
   debugInfo: RetrievalDebugInfo
 }
 
+const MOCK_CITATIONS_OVERVIEW: Citation[] = [
+  {
+    id: 'cit-ov-1',
+    index: 1,
+    fileId: 'file-roadmap',
+    fileName: 'Product Roadmap Q4 2024.gdoc',
+    chunkId: 'chunk-roadmap-ov',
+    chunkText:
+      'Q4 differentiation thesis: we win on three vectors — (1) AI-native search that understands intent, not just keywords; (2) real-time collaboration without the Notion tax; (3) seamless Google Workspace integration. These map directly to our ICP\'s (50–500 person knowledge-intensive companies) top unmet needs.',
+    highlightText: 'AI-native search that understands intent, not just keywords',
+    relevanceScore: 0.91,
+  },
+  {
+    id: 'cit-ov-2',
+    index: 2,
+    fileId: 'file-research',
+    fileName: 'User Research Summary.pdf',
+    chunkId: 'chunk-research-ov',
+    chunkText:
+      'In our Q3 2024 user research study (n=84), onboarding friction was cited by 67% of participants as the primary barrier to initial adoption. The average time-to-first-value was measured at 23 minutes — well above the 8-minute industry benchmark for SaaS productivity tools.',
+    highlightText: '67% of participants as the primary barrier to initial adoption',
+    relevanceScore: 0.88,
+  },
+  {
+    id: 'cit-ov-3',
+    index: 3,
+    fileId: 'file-metrics',
+    fileName: 'Q4 Growth Metrics.gsheet',
+    chunkId: 'chunk-metrics-ov',
+    chunkText:
+      'Q4 2024 Targets: ARR target $4.2M (+35% YoY). New logo target: 28 enterprise accounts (≥100 seats). Net Revenue Retention (NRR) target: 118%. Trial-to-paid conversion target: 24% (up from 19% in Q3).',
+    highlightText: 'ARR target $4.2M (+35% YoY)',
+    relevanceScore: 0.85,
+  },
+]
+
 // Keyword-matched mock responses
 export function getMockResponse(question: string): MockChatResponse {
   const q = question.toLowerCase()
+
+  // Generic "what is this / overview / summary" questions
+  const isOverview =
+    q.includes('overview') ||
+    q.includes('summary') ||
+    q.includes('summarize') ||
+    q.includes('what is this') ||
+    q.includes('what does this folder') ||
+    q.includes('what is in this') ||
+    q.includes('what\'s in this') ||
+    q.includes('whats in') ||
+    q.includes('tell me about') ||
+    q.includes('describe') ||
+    q.includes('folder contain') ||
+    q.includes('folder do') ||
+    q.includes('folder about') ||
+    (q.includes('what') && q.includes('folder')) ||
+    q === 'what does this folder do'
+
+  if (isOverview) {
+    const citations = MOCK_CITATIONS_OVERVIEW
+    return {
+      answer: `This folder contains **Q4 2024 product strategy materials** across 5 documents:\n\n**Product Roadmap Q4 2024** — outlines the Q4 differentiation thesis: AI-native search, real-time collaboration, and deep Google Workspace integration. Targets the 50–500 person knowledge-intensive company segment. [1]\n\n**User Research Summary** — Q3 2024 study (n=84) identifying the top user pain points: onboarding friction (67% of participants), time-to-first-value averaging 23 minutes vs. an 8-minute industry benchmark. [2]\n\n**Competitor Analysis** — detailed breakdown of positioning against Notion and Confluence, including specific differentiation vectors and market sizing.\n\n**Q4 Growth Metrics** — revenue and retention targets including $4.2M ARR (+35% YoY), 28 new enterprise logos, and 118% NRR. [3]\n\n**Exec Team Notes** — internal notes from customer advisory board sessions and leadership syncs.`,
+      citations,
+      metadata: makeMetadata(citations, 'high'),
+      debugInfo: makeDebugInfo(question, citations),
+    }
+  }
 
   if (q.includes('pain point') || q.includes('user research') || q.includes('problem')) {
     const citations = MOCK_CITATIONS_RESEARCH
