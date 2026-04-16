@@ -30,7 +30,7 @@ async function* mockStream(text: string): AsyncGenerator<string> {
 }
 
 export function useChat(): UseChatResult {
-  const { messages, addMessage, updateMessage, isStreaming, setIsStreaming, setCurrentCitations } =
+  const { messages, addMessage, updateMessage, isStreaming, setIsStreaming, setCurrentCitations, sessionId, setSessionId } =
     useChatStore()
   const { setRightPanelTab } = useUIStore()
   const abortRef = useRef<AbortController | null>(null)
@@ -94,7 +94,7 @@ export function useChat(): UseChatResult {
           const res = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ folderId, message: content }),
+            body: JSON.stringify({ folderId, message: content, sessionId }),
             signal: abortRef.current.signal,
           })
 
@@ -134,6 +134,8 @@ export function useChat(): UseChatResult {
                   finalMetadata = chunk.payload
                 } else if (chunk.type === 'debug') {
                   finalDebug = chunk.payload
+                } else if (chunk.type === 'done') {
+                  setSessionId(chunk.payload.sessionId)
                 }
               } catch {
                 // Ignore parse errors in stream
@@ -171,7 +173,7 @@ export function useChat(): UseChatResult {
         abortRef.current = null
       }
     },
-    [isStreaming, addMessage, updateMessage, setIsStreaming, setCurrentCitations, setRightPanelTab],
+    [isStreaming, sessionId, addMessage, updateMessage, setIsStreaming, setCurrentCitations, setSessionId, setRightPanelTab],
   )
 
   function stopStreaming() {

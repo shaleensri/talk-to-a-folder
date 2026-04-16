@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
-    serverComponentsExternalPackages: ['pdf-parse', '@prisma/client', 'prisma'],
+    serverComponentsExternalPackages: ['pdf-parse', 'mammoth', 'xlsx', 'officeparser', '@prisma/client', 'prisma'],
   },
   images: {
     remotePatterns: [

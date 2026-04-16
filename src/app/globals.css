@@ -125,6 +125,17 @@
     @apply outline-none ring-2 ring-indigo-500/30 ring-offset-2 ring-offset-background;
   }
 
+  /* Dot grid background — subtle texture for the chat canvas */
+  .bg-dot-grid {
+    background-image: radial-gradient(circle, theme('colors.zinc.800' / 60%) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  /* Gradient text */
+  .text-gradient-indigo {
+    @apply bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent;
+  }
+
   /* Prose-like answer content */
   .prose-answer {
     @apply space-y-2 text-sm text-zinc-300 leading-relaxed;

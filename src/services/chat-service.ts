@@ -69,14 +69,29 @@ export async function saveAssistantMessage(
 // Full chat pipeline (retrieve → generate), with optional streaming
 // ---------------------------------------------------------------------------
 
+const HISTORY_TURNS = 6 // last 6 messages = 3 user+assistant turns
+
 export async function chat(
   folderId: string,
   query: string,
   sessionId: string,
   streamCallback?: (token: string) => void,
 ): Promise<ChatResponse> {
+  // Load recent conversation history for context
+  const recentMessages = await prisma.chatMessage.findMany({
+    where: { sessionId },
+    orderBy: { createdAt: 'desc' },
+    take: HISTORY_TURNS + 1, // +1 because the current user message was just saved
+    select: { role: true, content: true },
+  })
+  // Reverse to chronological order, drop the last message (current query already in prompt)
+  const history = recentMessages
+    .reverse()
+    .slice(0, -1)
+    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+
   const retrieval = await retrieve(query, folderId)
-  const generated = await generateAnswer(query, retrieval, streamCallback)
+  const generated = await generateAnswer(query, retrieval, history, streamCallback)
 
   const response: ChatResponse = {
     messageId: generateId(),

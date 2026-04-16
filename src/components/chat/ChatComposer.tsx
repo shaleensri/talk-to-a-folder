@@ -57,12 +57,14 @@ export function ChatComposer({
   const canSend = input.trim().length > 0 && !disabled
 
   return (
-    <div className="border-t border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md px-4 py-3">
+    <div className="px-4 pb-5 pt-2">
       <div className="max-w-3xl mx-auto">
         <AnimatedBorder active={focused && !disabled}>
           <div
             className={cn(
-              'flex items-end gap-2 rounded-xl bg-zinc-900 px-3 py-2.5',
+              'flex items-end gap-2 rounded-2xl px-3 py-2.5',
+              'bg-zinc-900/90 backdrop-blur-xl',
+              'shadow-[0_8px_32px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.06)]',
               disabled && 'opacity-50',
             )}
           >
@@ -128,8 +130,8 @@ export function ChatComposer({
           </div>
         </AnimatedBorder>
 
-        <p className="text-center text-[11px] text-zinc-700 mt-2">
-          Shift+Enter for new line · answers grounded in folder contents
+        <p className="text-center text-[11px] text-zinc-700 mt-2 tracking-wide">
+          Shift+Enter for new line · grounded in your documents
         </p>
       </div>
     </div>

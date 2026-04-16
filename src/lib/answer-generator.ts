@@ -36,6 +36,7 @@ export interface GeneratedAnswer {
 export async function generateAnswer(
   query: string,
   retrieval: RetrievalResult,
+  history: { role: 'user' | 'assistant'; content: string }[] = [],
   streamCallback?: (token: string) => void,
 ): Promise<GeneratedAnswer> {
   const startMs = Date.now()
@@ -62,6 +63,8 @@ export async function generateAnswer(
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: 'system', content: CITATION_SYSTEM_PROMPT },
+    // Inject prior turns so the model can follow up on previous answers
+    ...history.map((m) => ({ role: m.role, content: m.content })),
     {
       role: 'user',
       content: `SOURCES:\n${context}\n\nQUESTION: ${query}`,
@@ -103,10 +106,12 @@ export async function generateAnswer(
 
   // Determine confidence based on top score and number of sources
   const topScore = retrieval.selectedChunks[0]?.score ?? 0
+  // text-embedding-3-small cosine scores typically peak at 0.55–0.75 for
+  // strong matches, so thresholds are calibrated lower than raw cosine intuition.
   const confidence: AnswerMetadata['confidence'] =
-    topScore >= 0.85 && citations.length >= 2
+    topScore >= 0.60 && citations.length >= 1
       ? 'high'
-      : topScore >= 0.70
+      : topScore >= 0.45
       ? 'medium'
       : 'low'
 

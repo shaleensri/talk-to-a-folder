@@ -10,10 +10,12 @@ interface FolderListProps {
   folders: IndexedFolder[]
   activeFolderId: string | null
   onSelect: (folder: IndexedFolder) => void
+  onReindex?: (folder: IndexedFolder) => void
+  onDelete?: (folder: IndexedFolder) => void
   isLoading?: boolean
 }
 
-export function FolderList({ folders, activeFolderId, onSelect, isLoading }: FolderListProps) {
+export function FolderList({ folders, activeFolderId, onSelect, onReindex, onDelete, isLoading }: FolderListProps) {
   if (isLoading) {
     return (
       <div className="px-2 space-y-1">
@@ -49,6 +51,8 @@ export function FolderList({ folders, activeFolderId, onSelect, isLoading }: Fol
               folder={folder}
               isActive={folder.id === activeFolderId}
               onSelect={onSelect}
+              onReindex={onReindex}
+              onDelete={onDelete}
             />
           </motion.div>
         ))}

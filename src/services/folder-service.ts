@@ -117,6 +117,9 @@ export async function upsertFiles(files: DriveFile[]): Promise<void> {
           status: f.status,
         },
         update: {
+          name: f.name,
+          mimeType: f.mimeType,
+          size: f.size,
           status: f.status,
         },
       }),
@@ -147,7 +150,21 @@ export async function discoverAndSaveFiles(
   folder: IndexedFolder,
   accessToken: string,
 ): Promise<DriveFile[]> {
-  const files = await listFolderFiles(folder.folderId, accessToken, folder.id)
+  const driveFiles = await listFolderFiles(folder.folderId, accessToken, folder.id)
+
+  // Reuse existing DB IDs for files we've seen before, so upsert-by-id works
+  // correctly on re-index instead of creating duplicate rows.
+  const existing = await prisma.driveFile.findMany({
+    where: { folderId: folder.id },
+    select: { id: true, driveFileId: true },
+  })
+  const existingMap = new Map(existing.map((f) => [f.driveFileId, f.id]))
+
+  const files = driveFiles.map((f) => ({
+    ...f,
+    id: existingMap.get(f.driveFileId) ?? f.id,
+  }))
+
   await upsertFiles(files)
   return files
 }

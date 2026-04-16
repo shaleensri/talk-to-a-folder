@@ -49,13 +49,29 @@ export async function retrieve(
 
   // 4. Check if any chunk meets the minimum threshold
   const topScore = allChunks[0]?.score ?? 0
-  const isSupported = topScore >= UNSUPPORTED_SCORE_THRESHOLD
+  const isSupported = topScore >= UNSUPPORTED_SCORE_THRESHOLD || allChunks.length > 0
 
   // 5. Select top N chunks that meet the minimum relevance threshold
-  const selectedChunks = allChunks
+  let selectedChunks = allChunks
     .filter((c) => c.score >= MIN_RELEVANCE_SCORE)
     .slice(0, TOP_K_CONTEXT)
     .map((c) => ({ ...c, selected: true }))
+
+  // 6. For broad/overview questions (low top score or no selected chunks),
+  //    spread: take the best chunk from each unique file so all files are represented.
+  if (selectedChunks.length === 0 || topScore < 0.40) {
+    const fileMap = new Map<string, RetrievedChunk>()
+    for (const chunk of allChunks) {
+      if (!fileMap.has(chunk.fileId)) fileMap.set(chunk.fileId, chunk)
+    }
+    const spreadChunks = Array.from(fileMap.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, TOP_K_CONTEXT)
+      .map((c) => ({ ...c, selected: true }))
+    if (spreadChunks.length > selectedChunks.length) {
+      selectedChunks = spreadChunks
+    }
+  }
 
   const selectedIds = new Set(selectedChunks.map((c) => c.chunkId))
 

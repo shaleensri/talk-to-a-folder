@@ -2,7 +2,7 @@
 
 import React, { useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { Bot, AlertTriangle } from 'lucide-react'
+import { Sparkles, AlertTriangle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CitationBadge } from './CitationBadge'
@@ -123,8 +123,8 @@ export function AssistantAnswer({ message }: AssistantAnswerProps) {
       className="flex gap-3 group"
     >
       {/* Avatar */}
-      <div className="flex-shrink-0 w-7 h-7 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center mt-0.5">
-        <Bot className="w-3.5 h-3.5 text-zinc-400" />
+      <div className="flex-shrink-0 w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500/20 to-violet-500/10 border border-indigo-500/25 flex items-center justify-center mt-0.5 shadow-[0_0_12px_rgba(99,102,241,0.12)]">
+        <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
       </div>
 
       {/* Card */}
@@ -133,8 +133,8 @@ export function AssistantAnswer({ message }: AssistantAnswerProps) {
           'flex-1 min-w-0 rounded-xl border px-4 py-3.5',
           'transition-shadow duration-200',
           isUnsupported
-            ? 'border-zinc-800/60 bg-zinc-900/40'
-            : 'border-zinc-800 bg-zinc-900 shadow-card group-hover:shadow-card-hover',
+            ? 'border-white/[0.05] bg-zinc-900/30'
+            : 'border-l-2 border-l-indigo-500/35 border-t border-r border-b border-white/[0.06] bg-zinc-900/80 backdrop-blur-sm shadow-[0_4px_24px_rgba(0,0,0,0.5),0_1px_0_rgba(255,255,255,0.04)_inset] group-hover:shadow-[0_8px_32px_rgba(0,0,0,0.6),0_1px_0_rgba(255,255,255,0.04)_inset] transition-shadow duration-300',
         )}
       >
         {/* Unsupported answer banner */}

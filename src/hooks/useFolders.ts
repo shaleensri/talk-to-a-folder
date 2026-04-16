@@ -29,7 +29,7 @@ export function useFolders(): UseFoldersResult {
         const res = await fetch('/api/folders')
         if (!res.ok) throw new Error('Failed to load folders')
         const data = await res.json()
-        setFolders(data.data.folders)
+        setFolders(data.folders)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load folders')

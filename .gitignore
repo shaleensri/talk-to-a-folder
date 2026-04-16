@@ -32,3 +32,7 @@ yarn-error.log*
 
 *.tsbuildinfo
 next-env.d.ts
+
+client_secret_google.json
+openai_secret.txt
+

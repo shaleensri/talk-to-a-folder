@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
 import { getFoldersForUser, createFolder } from '@/services/folder-service'
+import { ingestFolder } from '@/services/ingestion-service'
+import { getValidAccessToken } from '@/lib/google-auth'
 import type { CreateFolderRequest, ApiResponse } from '@/types'
 
 // GET /api/folders — list all folders for the authenticated user
@@ -45,25 +46,26 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // Get the Google access token from the DB (stored by NextAuth)
-  const account = await prisma.account.findFirst({
-    where: { userId: session.user.id, provider: 'google' },
-    select: { access_token: true },
-  })
-
-  if (!account?.access_token) {
-    return NextResponse.json<ApiResponse<never>>(
-      { error: 'Google access token not found. Please sign in again.' },
-      { status: 401 },
-    )
+  let accessToken: string
+  try {
+    accessToken = await getValidAccessToken(session.user.id)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to get access token'
+    return NextResponse.json<ApiResponse<never>>({ error: message }, { status: 401 })
   }
 
   try {
     const folder = await createFolder(
       body.driveUrl.trim(),
       session.user.id,
-      account.access_token,
+      accessToken,
     )
+
+    // Auto-trigger ingestion immediately — fire and forget
+    ingestFolder(folder, accessToken).catch((err) => {
+      console.error(`[POST /api/folders] Background ingestion error:`, err)
+    })
+
     return NextResponse.json({ folder }, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to create folder'

@@ -13,9 +13,12 @@ function getDriveClient(accessToken: string) {
   return google.drive({ version: 'v3', auth })
 }
 
+const MAX_DEPTH = 5 // prevent runaway recursion on deeply nested folders
+
 /**
- * Lists all supported files in a Drive folder (non-recursive for now).
- * Returns a list of DriveFile objects ready for parsing.
+ * Lists all supported files in a Drive folder, recursively traversing subfolders.
+ * File names include the relative path (e.g. "reports/Q1/revenue.docx") so the
+ * LLM understands where each file lives in the hierarchy.
  */
 export async function listFolderFiles(
   folderId: string,
@@ -23,25 +26,50 @@ export async function listFolderFiles(
   dbFolderId: string,
 ): Promise<DriveFile[]> {
   const drive = getDriveClient(accessToken)
+  const allFiles: DriveFile[] = []
 
-  const res = await drive.files.list({
-    q: `'${folderId}' in parents and trashed = false and (${SUPPORTED_MIME_TYPE_LIST.map((m) => `mimeType = '${m}'`).join(' or ')})`,
-    fields: 'files(id, name, mimeType, size)',
-    pageSize: MAX_FILES_PER_FOLDER,
-  })
+  async function walk(currentFolderId: string, pathPrefix: string, depth: number): Promise<void> {
+    if (depth > MAX_DEPTH || allFiles.length >= MAX_FILES_PER_FOLDER) return
 
-  const files = res.data.files ?? []
+    // Fetch supported files in this folder
+    const fileRes = await drive.files.list({
+      q: `'${currentFolderId}' in parents and trashed = false and (${SUPPORTED_MIME_TYPE_LIST.map((m) => `mimeType = '${m}'`).join(' or ')})`,
+      fields: 'files(id, name, mimeType, size)',
+      pageSize: MAX_FILES_PER_FOLDER,
+    })
 
-  return files.map((f) => ({
-    id: generateId(),
-    folderId: dbFolderId,
-    driveFileId: f.id!,
-    name: f.name!,
-    mimeType: f.mimeType! as SupportedMimeType,
-    size: f.size ? parseInt(f.size) : null,
-    status: 'pending' as const,
-    parsedAt: null,
-  }))
+    for (const f of fileRes.data.files ?? []) {
+      if (allFiles.length >= MAX_FILES_PER_FOLDER) break
+      allFiles.push({
+        id: generateId(),
+        folderId: dbFolderId,
+        driveFileId: f.id!,
+        name: pathPrefix ? `${pathPrefix}/${f.name!}` : f.name!,
+        mimeType: f.mimeType! as SupportedMimeType,
+        size: f.size ? parseInt(f.size) : null,
+        status: 'pending' as const,
+        parsedAt: null,
+      })
+    }
+
+    // Fetch subfolders and recurse
+    const folderRes = await drive.files.list({
+      q: `'${currentFolderId}' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'`,
+      fields: 'files(id, name)',
+      pageSize: 100,
+    })
+
+    for (const subfolder of folderRes.data.files ?? []) {
+      await walk(
+        subfolder.id!,
+        pathPrefix ? `${pathPrefix}/${subfolder.name!}` : subfolder.name!,
+        depth + 1,
+      )
+    }
+  }
+
+  await walk(folderId, '', 0)
+  return allFiles
 }
 
 /**

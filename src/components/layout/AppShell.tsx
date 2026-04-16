@@ -1,7 +1,7 @@
 'use client'
 
 import { useSession, signIn, signOut } from 'next-auth/react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { TopBar } from './TopBar'
 import { Sidebar } from './Sidebar'
@@ -12,6 +12,7 @@ import { useUIStore } from '@/store/ui-store'
 import { useChatStore } from '@/store/chat-store'
 import { useFolders } from '@/hooks/useFolders'
 import { useFolder } from '@/hooks/useFolder'
+import { IntroAnimation } from './IntroAnimation'
 import { MOCK_FOLDERS } from '@/lib/mock-data'
 
 const IS_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
@@ -20,9 +21,10 @@ export function AppShell() {
   const { data: session } = useSession()
   const { activeFolderId, setActiveFolderId } = useChatStore()
   const { sidebarCollapsed } = useUIStore()
+  const [introVisible, setIntroVisible] = useState(true)
 
   // In mock mode, use mock data; in real mode, fetch from API
-  const { folders, isLoading: foldersLoading } = useFolders()
+  const { folders, isLoading: foldersLoading, refetch: refetchFolders } = useFolders()
 
   // Auto-select first folder on load
   useEffect(() => {
@@ -32,7 +34,19 @@ export function AppShell() {
   }, [folders, activeFolderId, setActiveFolderId])
 
   const activeFolder = folders.find((f) => f.id === activeFolderId) ?? null
-  const { files } = useFolder(activeFolderId)
+  const { files, refetch: refetchFiles } = useFolder(activeFolderId)
+
+  function handleReindex() {
+    refetchFolders()
+    refetchFiles()
+  }
+
+  function handleDelete(folder: { id: string }) {
+    if (activeFolderId === folder.id) {
+      setActiveFolderId(null)
+    }
+    refetchFolders()
+  }
 
   const user = IS_MOCK
     ? { name: 'Demo User', email: 'demo@example.com', image: null }
@@ -53,7 +67,7 @@ export function AppShell() {
           {/* Sidebar — hidden on collapse */}
           <AnimatePresence>
             {!sidebarCollapsed && (
-              <Sidebar folders={folders} isLoading={foldersLoading} />
+              <Sidebar folders={folders} isLoading={foldersLoading} onReindex={handleReindex} onDelete={handleDelete} />
             )}
           </AnimatePresence>
 
@@ -71,7 +85,11 @@ export function AppShell() {
           <MainWorkspace activeFolder={activeFolder} files={files} />
         </div>
 
-        <AddFolderModal />
+        <AddFolderModal onFolderAdded={handleReindex} />
+
+        {introVisible && (
+          <IntroAnimation onComplete={() => setIntroVisible(false)} />
+        )}
       </div>
     </TooltipProvider>
   )

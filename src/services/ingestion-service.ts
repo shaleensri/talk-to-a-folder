@@ -155,8 +155,11 @@ export async function ingestFolder(
       },
     })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Ingestion failed'
-    console.error(`Ingestion failed for folder ${folderId}:`, message)
+    const rawMessage = err instanceof Error ? err.message : 'Ingestion failed'
+    const message = rawMessage.includes('404') || rawMessage.toLowerCase().includes('not found')
+      ? 'Folder not found on Google Drive. It may have been deleted or moved. You can remove it here.'
+      : rawMessage
+    console.error(`Ingestion failed for folder ${folderId}:`, rawMessage)
 
     await updateFolderStatus(folderId, 'error', { errorMessage: message })
 

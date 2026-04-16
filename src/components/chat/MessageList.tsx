@@ -29,7 +29,7 @@ export function MessageList({ messages, activeFolder, onQuestionSelect }: Messag
   }
 
   return (
-    <ScrollArea className="flex-1">
+    <ScrollArea className="flex-1 bg-dot-grid">
       <div className="flex flex-col gap-5 px-4 py-6 max-w-3xl mx-auto">
         <AnimatePresence initial={false}>
           {messages.map((message) =>

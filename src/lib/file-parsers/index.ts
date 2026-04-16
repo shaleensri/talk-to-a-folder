@@ -4,6 +4,9 @@ import { parseGoogleDoc } from './google-doc'
 import { parseGoogleSheet } from './google-sheet'
 import { parsePDF } from './pdf'
 import { parsePlainText } from './plain-text'
+import { parseWord } from './word'
+import { parseExcel } from './excel'
+import { parsePowerPoint } from './powerpoint'
 
 /**
  * Dispatches to the right parser based on the file's mimeType.
@@ -35,6 +38,24 @@ export async function parseFile(
     case 'text/csv': {
       const buffer = await downloadFile(driveFileId, accessToken)
       return parsePlainText(buffer.toString('utf-8'), fileId, fileName, mimeType)
+    }
+
+    case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+    case 'application/msword': {
+      const buffer = await downloadFile(driveFileId, accessToken)
+      return parseWord(buffer, fileId, fileName)
+    }
+
+    case 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+    case 'application/vnd.ms-excel': {
+      const buffer = await downloadFile(driveFileId, accessToken)
+      return parseExcel(buffer, fileId, fileName, mimeType)
+    }
+
+    case 'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+    case 'application/vnd.ms-powerpoint': {
+      const buffer = await downloadFile(driveFileId, accessToken)
+      return parsePowerPoint(buffer, fileId, fileName, mimeType)
     }
 
     default:

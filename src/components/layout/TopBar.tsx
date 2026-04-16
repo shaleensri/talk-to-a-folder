@@ -24,17 +24,17 @@ export function TopBar({ activeFolder, folders, user, onSignIn, onSignOut }: Top
 
   return (
     <header
-      className="sticky top-0 z-40 flex items-center justify-between px-4 border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-md"
+      className="sticky top-0 z-40 flex items-center justify-between px-4 bg-zinc-950/80 backdrop-blur-xl border-b border-white/[0.05] shadow-[0_1px_0_rgba(255,255,255,0.04),0_4px_24px_rgba(0,0,0,0.4)]"
       style={{ height: TOPBAR_HEIGHT }}
     >
       {/* Left — Logo */}
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center shadow-glow-sm">
-            <FolderOpen className="w-3.5 h-3.5 text-white" />
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-[0_0_14px_rgba(99,102,241,0.45)]">
+            <FolderOpen className="w-3.5 h-3.5 text-white" strokeWidth={2} />
           </div>
-          <span className="text-sm font-semibold text-zinc-100 tracking-tight">
-            talk<span className="text-indigo-400">·</span>folder
+          <span className="text-sm font-semibold tracking-tight">
+            <span className="text-zinc-100">talk</span><span className="text-indigo-400">·</span><span className="text-zinc-100">folder</span>
           </span>
         </div>
 

@@ -15,9 +15,11 @@ import type { IndexedFolder } from '@/types'
 interface SidebarProps {
   folders: IndexedFolder[]
   isLoading?: boolean
+  onReindex?: () => void
+  onDelete?: () => void
 }
 
-export function Sidebar({ folders, isLoading }: SidebarProps) {
+export function Sidebar({ folders, isLoading, onReindex, onDelete }: SidebarProps) {
   const { sidebarCollapsed, toggleSidebar, setAddFolderModalOpen } = useUIStore()
   const { activeFolderId, setActiveFolderId, clearMessages } = useChatStore()
   const [searchQuery, setSearchQuery] = useState('')
@@ -32,7 +34,7 @@ export function Sidebar({ folders, isLoading }: SidebarProps) {
     <motion.aside
       animate={{ width: sidebarCollapsed ? 0 : SIDEBAR_WIDTH }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-      className="relative flex-shrink-0 overflow-hidden border-r border-zinc-800 bg-zinc-950"
+      className="relative flex-shrink-0 overflow-hidden border-r border-white/[0.06] bg-zinc-950"
       style={{ top: 0 }}
     >
       <div
@@ -79,6 +81,8 @@ export function Sidebar({ folders, isLoading }: SidebarProps) {
               setActiveFolderId(folder.id)
               clearMessages()
             }}
+            onReindex={onReindex}
+            onDelete={onDelete}
             isLoading={isLoading}
           />
         </div>

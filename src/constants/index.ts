@@ -13,8 +13,8 @@ export const CHUNK_OVERLAP_CHARS = 200                // ~50 tokens
 
 export const TOP_K_RETRIEVAL = 8              // chunks retrieved from vector store
 export const TOP_K_CONTEXT = 5               // chunks passed to LLM
-export const MIN_RELEVANCE_SCORE = 0.65      // below this = likely off-topic
-export const UNSUPPORTED_SCORE_THRESHOLD = 0.5 // below all chunks → "unsupported" answer
+export const MIN_RELEVANCE_SCORE = 0.30      // below this = likely off-topic
+export const UNSUPPORTED_SCORE_THRESHOLD = 0.20 // below all chunks → "unsupported" answer
 
 // ---------------------------------------------------------------------------
 // Supported MIME types
@@ -27,6 +27,12 @@ export const SUPPORTED_MIME_TYPES: Record<string, string> = {
   'text/plain': 'Plain Text',
   'text/markdown': 'Markdown',
   'text/csv': 'CSV',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word Doc',
+  'application/msword': 'Word Doc (legacy)',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Excel',
+  'application/vnd.ms-excel': 'Excel (legacy)',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PowerPoint',
+  'application/vnd.ms-powerpoint': 'PowerPoint (legacy)',
 }
 
 export const SUPPORTED_MIME_TYPE_LIST = Object.keys(SUPPORTED_MIME_TYPES)

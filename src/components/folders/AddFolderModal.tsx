@@ -25,7 +25,11 @@ const IS_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 
 type ModalStep = 'input' | 'validating' | 'ingesting' | 'done' | 'error'
 
-export function AddFolderModal() {
+interface AddFolderModalProps {
+  onFolderAdded?: () => void
+}
+
+export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
   const { addFolderModalOpen, setAddFolderModalOpen } = useUIStore()
   const { setActiveFolderId } = useChatStore()
 
@@ -93,6 +97,7 @@ export function AddFolderModal() {
       setStep('done')
       setTimeout(() => {
         setActiveFolderId(MOCK_FOLDERS[0].id) // use existing mock folder
+        onFolderAdded?.()
         setAddFolderModalOpen(false)
         setTimeout(reset, 300)
       }, 1500)
@@ -109,7 +114,7 @@ export function AddFolderModal() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Failed to create folder')
 
-      const folder = data.data.folder
+      const folder = data.folder
       setStep('ingesting')
 
       // Start ingestion
@@ -119,18 +124,19 @@ export function AddFolderModal() {
       const poll = async () => {
         const statusRes = await fetch(`/api/folders/${folder.id}/status`)
         const statusData = await statusRes.json()
-        setProgress(statusData.data.status)
+        setProgress(statusData.status)
 
-        if (statusData.data.status.status === 'indexed') {
+        if (statusData.status.status === 'indexed') {
           setStep('done')
           setTimeout(() => {
             setActiveFolderId(folder.id)
+            onFolderAdded?.()
             setAddFolderModalOpen(false)
             setTimeout(reset, 300)
           }, 1500)
-        } else if (statusData.data.status.status === 'error') {
+        } else if (statusData.status.status === 'error') {
           setStep('error')
-          setError(statusData.data.status.errorMessage ?? 'Indexing failed')
+          setError(statusData.status.errorMessage ?? 'Indexing failed')
         } else {
           setTimeout(poll, 1500)
         }
