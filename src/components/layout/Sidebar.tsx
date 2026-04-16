@@ -16,7 +16,7 @@ interface SidebarProps {
   folders: IndexedFolder[]
   isLoading?: boolean
   onReindex?: () => void
-  onDelete?: () => void
+  onDelete?: (folder: IndexedFolder) => void
 }
 
 export function Sidebar({ folders, isLoading, onReindex, onDelete }: SidebarProps) {

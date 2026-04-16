@@ -2,7 +2,7 @@
 
 import { useSession, signIn, signOut } from 'next-auth/react'
 import { useEffect, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { AnimatePresence } from 'framer-motion'
 import { TopBar } from './TopBar'
 import { Sidebar } from './Sidebar'
 import { MainWorkspace } from './MainWorkspace'
@@ -13,7 +13,6 @@ import { useChatStore } from '@/store/chat-store'
 import { useFolders } from '@/hooks/useFolders'
 import { useFolder } from '@/hooks/useFolder'
 import { IntroAnimation } from './IntroAnimation'
-import { MOCK_FOLDERS } from '@/lib/mock-data'
 
 const IS_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 

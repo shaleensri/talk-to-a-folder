@@ -5,6 +5,32 @@ import { getOrCreateSession, saveUserMessage, chat } from '@/services/chat-servi
 import { getFolderById } from '@/services/folder-service'
 import type { ChatRequest, StreamChunk } from '@/types'
 
+// ---------------------------------------------------------------------------
+// In-memory rate limiter — 20 requests per user per 60 seconds
+// ---------------------------------------------------------------------------
+const RATE_LIMIT = 20
+const WINDOW_MS = 60_000
+
+const rateLimitMap = new Map<string, { count: number; windowStart: number }>()
+
+function checkRateLimit(userId: string): { allowed: boolean; retryAfterMs: number } {
+  const now = Date.now()
+  const entry = rateLimitMap.get(userId)
+
+  if (!entry || now - entry.windowStart > WINDOW_MS) {
+    rateLimitMap.set(userId, { count: 1, windowStart: now })
+    return { allowed: true, retryAfterMs: 0 }
+  }
+
+  if (entry.count >= RATE_LIMIT) {
+    const retryAfterMs = WINDOW_MS - (now - entry.windowStart)
+    return { allowed: false, retryAfterMs }
+  }
+
+  entry.count++
+  return { allowed: true, retryAfterMs: 0 }
+}
+
 /**
  * POST /api/chat
  * Streams an SSE response with token, citations, metadata, and debug chunks.
@@ -18,6 +44,21 @@ export async function POST(req: NextRequest) {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     })
+  }
+
+  const { allowed, retryAfterMs } = checkRateLimit(session.user.id)
+  if (!allowed) {
+    const seconds = Math.ceil(retryAfterMs / 1000)
+    return new Response(
+      JSON.stringify({ error: `Rate limit exceeded. Try again in ${seconds}s.` }),
+      {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': String(seconds),
+        },
+      },
+    )
   }
 
   let body: ChatRequest

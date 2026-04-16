@@ -2,6 +2,7 @@
 
 import { useCallback, useRef } from 'react'
 import { nanoid } from 'nanoid'
+import { toast } from 'sonner'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import { getMockResponse } from '@/lib/mock-data'
@@ -98,7 +99,11 @@ export function useChat(): UseChatResult {
             signal: abortRef.current.signal,
           })
 
-          if (!res.ok) throw new Error('Chat request failed')
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}))
+            const message = data.error ?? 'Chat request failed'
+            throw new Error(message)
+          }
 
           const reader = res.body?.getReader()
           if (!reader) throw new Error('No response stream')
@@ -136,6 +141,8 @@ export function useChat(): UseChatResult {
                   finalDebug = chunk.payload
                 } else if (chunk.type === 'done') {
                   setSessionId(chunk.payload.sessionId)
+                } else if (chunk.type === 'error') {
+                  toast.error(chunk.payload)
                 }
               } catch {
                 // Ignore parse errors in stream
@@ -162,6 +169,8 @@ export function useChat(): UseChatResult {
           // User stopped — finalize with what we have
           updateMessage(assistantId, { isStreaming: false, streamedContent: undefined })
         } else {
+          const message = err instanceof Error ? err.message : 'Something went wrong'
+          toast.error(message)
           updateMessage(assistantId, {
             content: 'Something went wrong. Please try again.',
             isStreaming: false,

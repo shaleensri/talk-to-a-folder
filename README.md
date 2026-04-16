@@ -21,50 +21,22 @@ Or in demo mode (no credentials): `NEXT_PUBLIC_MOCK_MODE=true npm run dev`
 
 ---
 
+### Implemented since initial build
+
+These were gaps that have since been closed — do not re-implement:
+
+- **Rate limiting** — `POST /api/chat` has an in-memory rate limiter (20 req/user/60s) at the top of [src/app/api/chat/route.ts](src/app/api/chat/route.ts). Returns HTTP 429 with a human-readable retry message.
+- **Error toasts** — `sonner` is installed. `<Toaster />` is in [src/app/layout.tsx](src/app/layout.tsx). [src/hooks/useChat.ts](src/hooks/useChat.ts) calls `toast.error()` on non-2xx responses, SSE `error` chunks, and network failures.
+- **Folder switch clears session** — [src/components/layout/Sidebar.tsx](src/components/layout/Sidebar.tsx) calls `clearMessages()` (which resets both `messages` and `sessionId`) on every folder select. `clearMessages` is defined in [src/store/chat-store.ts:45](src/store/chat-store.ts#L45).
+- **TiltCard hooks fix** — `useTransform` calls were incorrectly placed inside JSX `style` props in [src/components/ui/TiltCard.tsx](src/components/ui/TiltCard.tsx). Moved to component top level as `innerX`/`innerY`.
+
+---
+
 ### Known gaps — what to build next
 
-These are the only meaningful things left. Each has implementation notes.
+These are the remaining meaningful things left. Each has implementation notes.
 
-#### 1. Folder switch should reset chat session
-
-**Problem**: When the user selects a different folder, `sessionId` and `messages` in the chat store are not cleared. Follow-up questions can bleed conversation history across folders.
-
-**Where to fix**: [src/components/layout/AppShell.tsx](src/components/layout/AppShell.tsx)
-
-**How**: `AppShell` has a `setActiveFolderId` call — wrap it or add a `useEffect` that watches `activeFolderId` and calls `useChatStore.getState().clearMessages()` whenever it changes. `clearMessages` already resets both `messages` and `sessionId` (see [src/store/chat-store.ts:45](src/store/chat-store.ts#L45)).
-
-```typescript
-// In AppShell, add this effect:
-useEffect(() => {
-  useChatStore.getState().clearMessages()
-}, [activeFolderId])
-```
-
-But don't clear on the very first mount (when going from null → first folder). Guard with `useRef` to track previous value.
-
----
-
-#### 2. Rate limiting on `/api/chat`
-
-**Problem**: No throttle on the chat endpoint. A user (or bot) can hammer it and burn through OpenAI credits.
-
-**Where to add**: [src/app/api/chat/route.ts](src/app/api/chat/route.ts) — at the top of the `POST` handler, before any DB or OpenAI calls.
-
-**Recommended approach**: Use `@upstash/ratelimit` + `@upstash/redis` if deploying to Vercel. For local/SQLite dev, a simple in-memory `Map<userId, { count, windowStart }>` is fine. Limit: 20 requests per user per minute. Return HTTP 429 with `{ error: 'Rate limit exceeded' }`.
-
----
-
-#### 3. Surface API errors to the user
-
-**Problem**: When the API returns an error (bad Drive URL, token expired, OpenAI quota), the frontend either shows a generic "Something went wrong" in the chat bubble or fails silently. No toast or banner.
-
-**Where to fix**: [src/hooks/useChat.ts](src/hooks/useChat.ts) — the `catch` block at line 161. Also [src/components/folders/FolderCard.tsx](src/components/folders/FolderCard.tsx) for reindex errors.
-
-**How**: Add a `sonner` toast (already a common shadcn/ui pairing — install with `npx shadcn@latest add sonner`). In the catch block, call `toast.error(err.message)`. Add `<Toaster />` to [src/app/providers.tsx](src/app/providers.tsx).
-
----
-
-#### 4. File size guard in the API before fetching
+#### 1. File size guard in the API before fetching
 
 **Problem**: `MAX_FILE_SIZE_BYTES = 20MB` is defined in constants but never checked before downloading a file from Drive. Large files will silently consume memory.
 
@@ -72,7 +44,46 @@ But don't clear on the very first mount (when going from null → first folder).
 
 ---
 
-#### 5. Production vector store swap
+#### 5. Cross-folder comparison / multi-folder chat
+
+**Current limitation**: Retrieval is scoped to one folder — `WHERE folderId = activeFolder`. Even if conversation history mentions content from another folder, GPT-4o can't re-retrieve from it. Switching folders starts a new retrieval scope.
+
+**What this means for users**: You can't ask "Folder A says X — does Folder B agree?" and get a grounded answer from both. GPT-4o can only compare what's in the current folder's retrieved chunks against whatever is in the conversation history as plain text.
+
+**What full cross-folder support would require**:
+
+1. **Retrieval** — change `retrieve(query, folderId)` to `retrieve(query, folderIds: string[])` in [src/lib/retrieval.ts](src/lib/retrieval.ts). The vector store query already supports arbitrary filters — just remove the single-folder constraint.
+
+2. **Citations** — add `folderName` to the `Citation` type so the UI can show which folder each chunk came from.
+
+3. **UI** — a way to select which folders are in scope. Simplest: checkboxes next to each folder in the sidebar. Or a "search all folders" toggle.
+
+4. **Prompt** — tell GPT-4o it's working across multiple folders so it attributes answers correctly: "According to [Folder A]... whereas [Folder B] says..."
+
+5. **Session model** — per-folder sessions (see note below on session design) would need to be extended to support multi-folder sessions.
+
+**Effort**: Medium. Retrieval and prompt changes are small. The UI selection pattern is the most design work.
+
+---
+
+#### 6. Per-folder chat sessions (better than global clear)
+
+**Current behavior**: Switching folders clears messages and `sessionId`. Simple but lossy — if you switch back to folder A, the conversation is gone.
+
+**Better model**: Store a separate `{ sessionId, messages }` per folder in the chat store:
+
+```typescript
+// chat-store.ts
+sessions: Record<string, { sessionId: string | null; messages: ChatMessage[] }>
+```
+
+Switching folders would just change which slot is active — each folder's conversation is preserved independently. Switching back to folder A picks up exactly where you left off.
+
+**Where to change**: [src/store/chat-store.ts](src/store/chat-store.ts) (restructure state), [src/components/layout/Sidebar.tsx](src/components/layout/Sidebar.tsx) (remove `clearMessages()` on select), [src/hooks/useChat.ts](src/hooks/useChat.ts) (read/write into `sessions[activeFolderId]`).
+
+---
+
+#### 7. Production vector store swap
 
 **Not urgent — but the path is already paved.** The `VectorStore` interface in [src/lib/vector-store.ts](src/lib/vector-store.ts) abstracts the backend. Current impl is `PrismaVectorStore` (SQLite + in-memory cosine). For production scale:
 
@@ -179,7 +190,12 @@ All layers are implemented and the app runs end-to-end with real Google credenti
 - `POST /api/folders/[id]/ingest` — trigger re-index
 - `GET /api/folders/[id]/status` — ingestion progress (polled by UI)
 - `GET /api/folders/[id]/files` — list indexed files
-- `POST /api/chat` — SSE streaming: `token` → `citations` → `metadata` → `debug` → `[DONE]`
+- `POST /api/chat` — SSE streaming: `token` → `citations` → `metadata` → `debug` → `[DONE]`; rate limited to 20 req/user/60s, returns 429 with retry time on breach
+
+**Error handling**
+- `sonner` toasts on all API failures — rate limit, token expiry, OpenAI errors, network failures
+- SSE `error` chunks (server-side failures mid-stream) surface as toasts, not silent drops
+- Folder switch calls `clearMessages()` — resets `messages` and `sessionId` so history doesn't bleed across folders
 
 **UI**
 - Curtain-lift intro animation on first load (Framer Motion)
@@ -201,13 +217,12 @@ All layers are implemented and the app runs end-to-end with real Google credenti
 
 | Gap | Notes |
 |-----|-------|
-| Rate limiting on `/api/chat` | No per-user or per-IP throttle — easy to add with `upstash/ratelimit` or a simple in-memory counter |
-| Folder switch resets chat session | Switching folders should clear `sessionId` in the chat store; currently conversation history can bleed across folders |
-| Production vector store | SQLite + in-memory cosine is fine for hundreds of chunks. For scale: swap `PrismaVectorStore` for Pinecone or `pgvector` — the `VectorStore` interface makes this a one-file change |
+| File size guard | 20 MB cap in constants but never checked before fetching — oversized files consume memory silently |
+| Per-folder chat sessions | Switching folders clears history. Better: keep a session per folder so switching back restores the conversation |
+| Cross-folder comparison | Retrieval is scoped to one folder. True multi-folder Q&A requires retrieval across multiple vector sets |
+| Production vector store | SQLite + in-memory cosine is fine for hundreds of chunks. For scale: swap `PrismaVectorStore` for Pinecone or `pgvector` — one-file change |
 | Test suite | No unit or integration tests |
 | Deployment config | No `vercel.json` or Dockerfile |
-| Error UX | API errors surface as console logs; no toast/banner shown to the user |
-| File size limits | 20 MB cap is enforced in constants but not validated in the API route before fetching |
 
 ---
 
