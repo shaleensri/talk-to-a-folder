@@ -3,7 +3,8 @@
 import { FileText, Sheet, File } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { listContainer, listItem } from '@/constants/animations'
-import { cn, formatFileSize, mimeTypeToExtension } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn, formatFileSize } from '@/lib/utils'
 import type { DriveFile, IndexedFolder } from '@/types'
 
 interface FolderTreeProps {
@@ -23,7 +24,12 @@ const statusDot: Record<DriveFile['status'], string> = {
   parsing: 'bg-indigo-500 animate-pulse',
   pending: 'bg-zinc-700',
   error: 'bg-red-500',
-  skipped: 'bg-zinc-800',
+  skipped: 'bg-zinc-600',
+}
+
+const DEFAULT_ERROR_MSG: Record<string, string> = {
+  error: 'Failed to parse this file.',
+  skipped: 'File was skipped — no usable text content found.',
 }
 
 export function FolderTree({ folder, files }: FolderTreeProps) {
@@ -76,8 +82,24 @@ export function FolderTree({ folder, files }: FolderTreeProps) {
                 <p className="text-[10px] text-zinc-600">{formatFileSize(file.size)}</p>
               )}
             </div>
-            {/* Status dot */}
-            <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', statusDot[file.status])} />
+            {/* Status dot — with tooltip for error/skipped */}
+            {(file.status === 'error' || file.status === 'skipped') ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    className={cn(
+                      'w-1.5 h-1.5 rounded-full flex-shrink-0 cursor-help',
+                      statusDot[file.status],
+                    )}
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="left" className="max-w-56 text-xs">
+                  {file.errorMessage ?? DEFAULT_ERROR_MSG[file.status]}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', statusDot[file.status])} />
+            )}
           </motion.div>
         ))}
       </motion.div>

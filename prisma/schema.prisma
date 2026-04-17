@@ -51,6 +51,7 @@ model User {
   accounts      Account[]
   sessions      Session[]
   folders       IndexedFolder[]
+  chatSessions  ChatSession[]
 }
 
 model VerificationToken {
@@ -82,7 +83,7 @@ model IndexedFolder {
   user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   files DriveFile[]
   chunks TextChunk[]
-  sessions ChatSession[]
+  chatSessionFolders ChatSessionFolder[]
 }
 
 model DriveFile {
@@ -118,14 +119,29 @@ model TextChunk {
   file   DriveFile     @relation(fields: [fileId], references: [id], onDelete: Cascade)
 }
 
+// A chat session can reference multiple folders (many-to-many via ChatSessionFolder)
 model ChatSession {
   id        String   @id @default(cuid())
-  folderId  String
+  userId    String?
+  title     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  folder   IndexedFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  user     User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  folders  ChatSessionFolder[]
   messages ChatMessage[]
+}
+
+// Join table: which folders a chat session references
+model ChatSessionFolder {
+  sessionId String
+  folderId  String
+  addedAt   DateTime @default(now())
+
+  session ChatSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  folder  IndexedFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, folderId])
 }
 
 model ChatMessage {

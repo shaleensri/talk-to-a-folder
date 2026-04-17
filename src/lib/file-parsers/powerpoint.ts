@@ -6,9 +6,11 @@ export async function parsePowerPoint(
   fileName: string,
   mimeType: string,
 ): Promise<ParsedFile> {
-  // officeparser doesn't have great TS types — import dynamically
-  const { parseOfficeAsync } = await import('officeparser')
-  const content: string = await parseOfficeAsync(buffer)
+  // officeparser v6: named export is `parseOffice` (async), returns AST with .toText()
+  const { parseOffice } = await import('officeparser')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ast: any = await parseOffice(buffer)
+  const content: string = typeof ast.toText === 'function' ? ast.toText() : String(ast)
   return {
     fileId,
     fileName,

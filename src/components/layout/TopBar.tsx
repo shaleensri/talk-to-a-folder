@@ -1,25 +1,19 @@
 'use client'
 
-import { FolderOpen, Plus, LogIn, LogOut, ChevronDown } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { FolderOpen, Plus, LogIn } from 'lucide-react'
 import Image from 'next/image'
 import { useUIStore } from '@/store/ui-store'
-import { useChatStore } from '@/store/chat-store'
 import { Button } from '@/components/ui/button'
-import { FolderStatusPill } from '@/components/folders/FolderStatusPill'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { TOPBAR_HEIGHT } from '@/constants'
-import type { IndexedFolder } from '@/types'
 
 interface TopBarProps {
-  activeFolder: IndexedFolder | null
-  folders: IndexedFolder[]
   user: { name?: string | null; image?: string | null; email?: string | null } | null
   onSignIn: () => void
   onSignOut: () => void
 }
 
-export function TopBar({ activeFolder, folders, user, onSignIn, onSignOut }: TopBarProps) {
+export function TopBar({ user, onSignIn, onSignOut }: TopBarProps) {
   const { setAddFolderModalOpen } = useUIStore()
 
   return (
@@ -37,24 +31,6 @@ export function TopBar({ activeFolder, folders, user, onSignIn, onSignOut }: Top
             <span className="text-zinc-100">talk</span><span className="text-indigo-400">·</span><span className="text-zinc-100">folder</span>
           </span>
         </div>
-
-        {/* Divider */}
-        {activeFolder && (
-          <>
-            <span className="text-zinc-700 select-none">/</span>
-            <motion.div
-              key={activeFolder.id}
-              initial={{ opacity: 0, x: -4 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="flex items-center gap-2"
-            >
-              <span className="text-sm text-zinc-300 font-medium truncate max-w-[200px]">
-                {activeFolder.name}
-              </span>
-              <FolderStatusPill status={activeFolder.status} size="sm" />
-            </motion.div>
-          </>
-        )}
       </div>
 
       {/* Right — Actions */}

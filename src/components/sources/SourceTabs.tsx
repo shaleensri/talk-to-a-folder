@@ -17,7 +17,9 @@ interface SourceTabsProps {
 
 export function SourceTabs({ activeFolder, files }: SourceTabsProps) {
   const { rightPanelTab, setRightPanelTab } = useUIStore()
-  const { messages } = useChatStore()
+  const { tabs, activeTabId } = useChatStore()
+  const activeTab = tabs.find((t) => t.id === activeTabId)
+  const messages = activeTab?.messages ?? []
 
   // Get the last assistant message's data
   const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant')

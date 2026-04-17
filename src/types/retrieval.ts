@@ -20,6 +20,7 @@ export interface RetrievedChunk {
   chunkId: string
   fileId: string
   fileName: string
+  folderId: string    // which folder this chunk came from
   text: string
   score: number
   rank: number        // 1-based position in retrieved set

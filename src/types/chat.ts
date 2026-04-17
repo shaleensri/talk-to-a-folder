@@ -37,3 +37,12 @@ export interface SuggestedQuestion {
   id: string
   text: string
 }
+
+export interface ChatTab {
+  id: string
+  sessionId: string | null
+  folderIds: string[]       // folders this chat references
+  messages: ChatMessage[]
+  isStreaming: boolean
+  currentCitations: Citation[]
+}

@@ -1,3 +1,4 @@
+import OpenAI from 'openai'
 import { prisma } from '@/lib/prisma'
 import { retrieve } from '@/lib/retrieval'
 import { generateAnswer } from '@/lib/answer-generator'
@@ -5,11 +6,62 @@ import { generateId } from '@/lib/utils'
 import type { ChatResponse } from '@/types'
 
 // ---------------------------------------------------------------------------
+// Query rewriting
+// ---------------------------------------------------------------------------
+
+// Contextual references that suggest the query depends on prior conversation
+const CONTEXTUAL_RE =
+  /\b(that|those|it|them|this|same|another|other|rest|more about|else|above|mentioned|previous|last|the file|the document|the folder|expand|elaborate|tell me more|what about|how about|what else|go deeper|more detail|the one|those files)\b/i
+
+/**
+ * If the query contains contextual references (e.g. "that file", "tell me more"),
+ * uses gpt-4o-mini to rewrite it into a fully self-contained question.
+ * Falls back silently to the original query on any error.
+ */
+async function rewriteQueryIfNeeded(
+  query: string,
+  history: { role: 'user' | 'assistant'; content: string }[],
+): Promise<string> {
+  if (history.length === 0) return query
+  if (!CONTEXTUAL_RE.test(query)) return query
+
+  try {
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const recentHistory = history.slice(-4) // last 2 turns is enough context
+
+    const res = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are helping a document Q&A system. ' +
+            'Rewrite the user\'s latest question to be fully self-contained by resolving any pronouns or vague references ' +
+            '(e.g. "that file" → the actual file name, "it" → the actual topic, "tell me more" → "tell me more about X"). ' +
+            'Use only information present in the conversation history. ' +
+            'Output ONLY the rewritten question — no explanation, no prefix, no quotes. ' +
+            'If no rewrite is needed, output the original question unchanged.',
+        },
+        ...recentHistory.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        { role: 'user', content: query },
+      ],
+      temperature: 0,
+      max_tokens: 200,
+    })
+
+    return res.choices[0]?.message?.content?.trim() || query
+  } catch {
+    return query // never block the chat on a rewrite failure
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Session management
 // ---------------------------------------------------------------------------
 
 export async function getOrCreateSession(
-  folderId: string,
+  folderIds: string[],
+  userId?: string,
   sessionId?: string,
 ): Promise<string> {
   if (sessionId) {
@@ -22,7 +74,10 @@ export async function getOrCreateSession(
   const session = await prisma.chatSession.create({
     data: {
       id: generateId(),
-      folderId,
+      ...(userId && { userId }),
+      folders: {
+        create: folderIds.map((folderId) => ({ folderId })),
+      },
     },
   })
   return session.id
@@ -72,7 +127,7 @@ export async function saveAssistantMessage(
 const HISTORY_TURNS = 6 // last 6 messages = 3 user+assistant turns
 
 export async function chat(
-  folderId: string,
+  folderIds: string[],
   query: string,
   sessionId: string,
   streamCallback?: (token: string) => void,
@@ -90,8 +145,22 @@ export async function chat(
     .slice(0, -1)
     .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
-  const retrieval = await retrieve(query, folderId)
-  const generated = await generateAnswer(query, retrieval, history, streamCallback)
+  // Rewrite vague follow-up queries into self-contained ones before retrieval
+  const effectiveQuery = await rewriteQueryIfNeeded(query, history)
+
+  const retrieval = await retrieve(effectiveQuery, folderIds)
+
+  // Build folder name map for multi-folder labeling
+  const folderRecords = await prisma.indexedFolder.findMany({
+    where: { id: { in: folderIds } },
+    select: { id: true, name: true },
+  })
+  const folderNames = new Map(folderRecords.map((f) => [f.id, f.name]))
+
+  // Answer uses the effective (possibly rewritten) query for retrieval context,
+  // but the original query is what the user sees — so pass effectiveQuery to the
+  // LLM so it knows what was actually being asked.
+  const generated = await generateAnswer(effectiveQuery, retrieval, history, streamCallback, folderNames)
 
   const response: ChatResponse = {
     messageId: generateId(),

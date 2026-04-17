@@ -88,7 +88,8 @@ export async function getFolderName(
 }
 
 /**
- * Exports a Google Doc/Sheet as plain text.
+ * Exports a Google Doc/Sheet as plain text, with one retry on transient errors.
+ * Google's export API can return 500 for large or complex documents.
  */
 export async function exportGoogleFile(
   driveFileId: string,
@@ -102,12 +103,47 @@ export async function exportGoogleFile(
       ? 'text/csv'
       : 'text/plain'
 
-  const res = await drive.files.export(
-    { fileId: driveFileId, mimeType: exportMimeType },
-    { responseType: 'text' },
-  )
+  async function attempt(): Promise<string> {
+    const res = await drive.files.export(
+      { fileId: driveFileId, mimeType: exportMimeType },
+      { responseType: 'text' },
+    )
+    return res.data as string
+  }
 
-  return res.data as string
+  try {
+    return await attempt()
+  } catch (err) {
+    // Parse Google API error for a readable status code
+    const code = (err as { code?: number })?.code
+      ?? (err as { response?: { status?: number } })?.response?.status
+
+    if (code === 500 || code === 503) {
+      // Retry once after a short delay for transient Google errors
+      await new Promise((r) => setTimeout(r, 2000))
+      try {
+        return await attempt()
+      } catch (retryErr) {
+        throw new Error(
+          'Google Drive could not export this file (server error). ' +
+          'This usually happens with very large or complex documents. ' +
+          'Try converting it to a simpler format or splitting it into smaller files.',
+        )
+      }
+    }
+
+    if (code === 403) {
+      throw new Error(
+        'Access denied — make sure this file is shared with your Google account.',
+      )
+    }
+
+    // Re-throw with a cleaner message instead of raw JSON
+    const message = (err as Error)?.message ?? String(err)
+    const parsed = (() => { try { return JSON.parse(message) } catch { return null } })()
+    const googleMsg = parsed?.error?.message
+    throw new Error(googleMsg ?? message)
+  }
 }
 
 /**

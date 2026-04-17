@@ -71,30 +71,31 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  if (!body.folderId || !body.message?.trim()) {
-    return new Response(JSON.stringify({ error: 'folderId and message are required' }), {
+  if (!body.folderIds?.length || !body.message?.trim()) {
+    return new Response(JSON.stringify({ error: 'folderIds and message are required' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     })
   }
 
-  // Verify the folder belongs to this user
-  const folder = await getFolderById(body.folderId, session.user.id)
-  if (!folder) {
-    return new Response(JSON.stringify({ error: 'Folder not found' }), {
+  // Verify all folders belong to this user and are indexed
+  const folders = await Promise.all(
+    body.folderIds.map((id) => getFolderById(id, session.user.id)),
+  )
+  if (folders.some((f) => !f)) {
+    return new Response(JSON.stringify({ error: 'One or more folders not found' }), {
       status: 404,
       headers: { 'Content-Type': 'application/json' },
     })
   }
-
-  if (folder.status !== 'indexed') {
+  if (folders.some((f) => f!.status !== 'indexed')) {
     return new Response(
-      JSON.stringify({ error: 'Folder is not indexed yet. Please wait for ingestion to complete.' }),
+      JSON.stringify({ error: 'All folders must be fully indexed before chatting.' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
     )
   }
 
-  const sessionId = await getOrCreateSession(body.folderId, body.sessionId)
+  const sessionId = await getOrCreateSession(body.folderIds, session.user.id, body.sessionId)
   await saveUserMessage(sessionId, body.message.trim())
 
   // Build the SSE stream
@@ -109,7 +110,7 @@ export async function POST(req: NextRequest) {
       try {
         // Stream tokens as they arrive from OpenAI
         const response = await chat(
-          body.folderId,
+          body.folderIds,
           body.message.trim(),
           sessionId,
           (token) => {

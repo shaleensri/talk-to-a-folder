@@ -11,7 +11,7 @@ export interface CreateFolderRequest {
 }
 
 export interface ChatRequest {
-  folderId: string
+  folderIds: string[]
   message: string
   sessionId?: string
 }

@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import type { RetrievedChunk, Citation, AnswerMetadata } from '@/types'
 import type { RetrievalResult } from './retrieval'
+import { isSummarizationQuery, isComparisonQuery } from './retrieval'
 import { CHAT_MODEL } from '@/constants'
 import { generateId } from './utils'
 
@@ -14,12 +15,47 @@ RULES:
 5. Format answers with markdown: **bold** for key terms, bullet lists for multi-part answers.
 6. Be concise and direct. Avoid filler phrases.`
 
-function buildContext(chunks: RetrievedChunk[]): string {
+const SUMMARIZATION_SYSTEM_PROMPT = `You are an expert research assistant. Your job is to summarize documents from a user's Google Drive folder.
+
+RULES:
+1. Use ONLY the provided source chunks. Do not use external knowledge.
+2. Cite sources with [N] inline where relevant (e.g., "She studied Computer Science [1]...").
+3. Every file in the sources MUST be mentioned at least briefly — even if its content is short or simple. Never silently omit a file.
+4. Write a cohesive, insightful synthesis — NOT a flat list of facts. Lead with a brief overview sentence, then cover each file or theme.
+5. Highlight what is notable or interesting about the content, not just what it contains.
+6. Use markdown: **bold** for key terms, organized sections with headers if the content warrants it.
+7. Write at the level of a smart colleague explaining the documents to someone who hasn't read them.`
+
+const CROSS_FOLDER_SYSTEM_PROMPT = `You are an expert research assistant. Your job is to compare and contrast documents across multiple Google Drive folders.
+
+RULES:
+1. Answer using ONLY the provided source chunks. Do not use external knowledge.
+2. Each source chunk is labeled with its folder name in brackets, e.g. [Folder: Q4 Strategy].
+3. Cite every claim with [N] inline (e.g., "Folder A argues X [1] while Folder B shows Y [2]").
+4. Organize your answer by comparison dimension, not by folder — highlight the meaningful differences and similarities.
+5. If the folders cover the same topic, explicitly call out agreements and contradictions.
+6. Use markdown: **bold** for key contrasts, a table if comparing structured attributes helps clarity.
+7. Be direct. Avoid "both folders discuss..." — instead say what each actually says.`
+
+/**
+ * Builds the context string passed to the LLM.
+ * When multiple folders are involved, each chunk is labeled with its folder name
+ * so the model can attribute and compare content by source.
+ */
+function buildContext(
+  chunks: RetrievedChunk[],
+  folderNames?: Map<string, string>,
+): string {
+  const isMultiFolder = folderNames && folderNames.size > 1
+
   return chunks
-    .map(
-      (chunk, i) =>
-        `[${i + 1}] FILE: ${chunk.fileName}\n${chunk.text}`,
-    )
+    .map((chunk, i) => {
+      const folderLabel =
+        isMultiFolder && folderNames.has(chunk.folderId)
+          ? `[Folder: ${folderNames.get(chunk.folderId)}] `
+          : ''
+      return `[${i + 1}] ${folderLabel}FILE: ${chunk.fileName}\n${chunk.text}`
+    })
     .join('\n\n---\n\n')
 }
 
@@ -31,13 +67,14 @@ export interface GeneratedAnswer {
 
 /**
  * Generates a grounded answer with inline citation markers.
- * Uses a structured prompt that forces [N] citation placement.
+ * Supports single-folder Q&A, summarization, and multi-folder cross-comparison.
  */
 export async function generateAnswer(
   query: string,
   retrieval: RetrievalResult,
   history: { role: 'user' | 'assistant'; content: string }[] = [],
   streamCallback?: (token: string) => void,
+  folderNames?: Map<string, string>,
 ): Promise<GeneratedAnswer> {
   const startMs = Date.now()
 
@@ -59,15 +96,32 @@ export async function generateAnswer(
   }
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  const context = buildContext(retrieval.selectedChunks)
+  const isMultiFolder = (folderNames?.size ?? 0) > 1
+  const isSummarize = isSummarizationQuery(query)
+  const isComparison = isMultiFolder && isComparisonQuery(query)
+
+  const context = buildContext(retrieval.selectedChunks, folderNames)
+
+  const systemPrompt = isComparison
+    ? CROSS_FOLDER_SYSTEM_PROMPT
+    : isSummarize
+    ? SUMMARIZATION_SYSTEM_PROMPT
+    : CITATION_SYSTEM_PROMPT
+
+  const maxTokens = isSummarize || isComparison ? 1500 : 1000
+
+  // Add a brief multi-folder preamble so the model knows the scope
+  const folderPreamble =
+    isMultiFolder && folderNames
+      ? `You have content from ${folderNames.size} folders: ${Array.from(folderNames.values()).join(', ')}.\n\n`
+      : ''
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [
-    { role: 'system', content: CITATION_SYSTEM_PROMPT },
-    // Inject prior turns so the model can follow up on previous answers
+    { role: 'system', content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
     {
       role: 'user',
-      content: `SOURCES:\n${context}\n\nQUESTION: ${query}`,
+      content: `${folderPreamble}SOURCES:\n${context}\n\nQUESTION: ${query}`,
     },
   ]
 
@@ -79,7 +133,7 @@ export async function generateAnswer(
       messages,
       stream: true,
       temperature: 0.1,
-      max_tokens: 1000,
+      max_tokens: maxTokens,
     })
 
     for await (const chunk of stream) {
@@ -94,20 +148,16 @@ export async function generateAnswer(
       model: CHAT_MODEL,
       messages,
       temperature: 0.1,
-      max_tokens: 1000,
+      max_tokens: maxTokens,
     })
     answer = completion.choices[0]?.message?.content ?? ''
   }
 
   const generationLatencyMs = Date.now() - startMs
 
-  // Parse citations from answer text
   const citations = parseCitations(answer, retrieval.selectedChunks)
 
-  // Determine confidence based on top score and number of sources
   const topScore = retrieval.selectedChunks[0]?.score ?? 0
-  // text-embedding-3-small cosine scores typically peak at 0.55–0.75 for
-  // strong matches, so thresholds are calibrated lower than raw cosine intuition.
   const confidence: AnswerMetadata['confidence'] =
     topScore >= 0.60 && citations.length >= 1
       ? 'high'
@@ -117,7 +167,6 @@ export async function generateAnswer(
 
   const fileIds = new Set(citations.map((c) => c.fileId))
 
-  // Update debug info latencies
   retrieval.debugInfo.generationLatencyMs = generationLatencyMs
   retrieval.debugInfo.totalLatencyMs =
     retrieval.debugInfo.retrievalLatencyMs + generationLatencyMs
@@ -152,7 +201,6 @@ function parseCitations(answer: string, chunks: RetrievedChunk[]): Citation[] {
       const chunk = chunks[index - 1]
       if (!chunk) return null
 
-      // Extract a highlight span: first 100 chars of the chunk
       const highlightText = chunk.text.slice(0, 120).split('.')[0] + '.'
 
       const citation: Citation = {

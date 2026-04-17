@@ -1,12 +1,19 @@
 'use client'
 
-import { FolderOpen, RefreshCw, Trash2 } from 'lucide-react'
+import { FolderOpen, RefreshCw, Trash2, AlertTriangle } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { useState } from 'react'
 import { FolderStatusPill } from './FolderStatusPill'
 import { TiltCard } from '@/components/ui/TiltCard'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn, formatRelativeTime } from '@/lib/utils'
 import type { IndexedFolder } from '@/types'
+
+const STALE_HOURS = 24
+
+function hoursAgo(date: Date): number {
+  return (Date.now() - new Date(date).getTime()) / 3_600_000
+}
 
 interface FolderCardProps {
   folder: IndexedFolder
@@ -20,6 +27,11 @@ export function FolderCard({ folder, isActive, onSelect, onReindex, onDelete }: 
   const [reindexing, setReindexing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+
+  const isStale =
+    folder.status === 'indexed' &&
+    folder.lastIndexed != null &&
+    hoursAgo(folder.lastIndexed) > STALE_HOURS
 
   async function handleReindex(e: React.MouseEvent) {
     e.stopPropagation()
@@ -137,9 +149,22 @@ export function FolderCard({ folder, isActive, onSelect, onReindex, onDelete }: 
       </div>
 
       {folder.lastIndexed && folder.status === 'indexed' && (
-        <span className="pl-6 text-[11px] text-zinc-700">
-          {formatRelativeTime(new Date(folder.lastIndexed))}
-        </span>
+        <div className="pl-6 flex items-center gap-1.5">
+          <span className={cn('text-[11px]', isStale ? 'text-amber-500/80' : 'text-zinc-600')}>
+            Indexed {formatRelativeTime(new Date(folder.lastIndexed))}
+          </span>
+          {isStale && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <AlertTriangle className="w-3 h-3 text-amber-500/80 flex-shrink-0" />
+              </TooltipTrigger>
+              <TooltipContent side="right" className="max-w-48 text-xs">
+                Last indexed over {Math.floor(hoursAgo(folder.lastIndexed!))}h ago — files may have
+                changed. Hit Re-index to refresh.
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
       )}
     </motion.button>
     </TiltCard>

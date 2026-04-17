@@ -88,7 +88,10 @@ export async function ingestFolder(
         const parsedFile = await parseFile(file, accessToken)
 
         if (!parsedFile.content.trim()) {
-          await updateFileStatus(file.id, 'skipped')
+          await updateFileStatus(file.id, 'skipped', {
+            errorMessage:
+              'No text content found — file may be image-only, scanned, or empty.',
+          })
           skipped++
           continue
         }

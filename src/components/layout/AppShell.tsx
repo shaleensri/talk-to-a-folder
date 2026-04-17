@@ -1,7 +1,7 @@
 'use client'
 
 import { useSession, signIn, signOut } from 'next-auth/react'
-import { useEffect, useState } from 'react'
+import { useState, useEffect } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { TopBar } from './TopBar'
 import { Sidebar } from './Sidebar'
@@ -18,22 +18,32 @@ const IS_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 
 export function AppShell() {
   const { data: session } = useSession()
-  const { activeFolderId, setActiveFolderId } = useChatStore()
   const { sidebarCollapsed } = useUIStore()
+  const { tabs, activeTabId, closeTab, removeFolderFromTab, loadFromHistory } = useChatStore()
   const [introVisible, setIntroVisible] = useState(true)
 
-  // In mock mode, use mock data; in real mode, fetch from API
   const { folders, isLoading: foldersLoading, refetch: refetchFolders } = useFolders()
 
-  // Auto-select first folder on load
+  // Restore chat history from DB on first load
   useEffect(() => {
-    if (!activeFolderId && folders.length > 0) {
-      setActiveFolderId(folders[0].id)
-    }
-  }, [folders, activeFolderId, setActiveFolderId])
+    if (IS_MOCK || !session?.user) return
+    fetch('/api/sessions')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.sessions?.length) {
+          loadFromHistory(data.sessions)
+        }
+      })
+      .catch(() => {/* silently ignore — history is a nice-to-have */})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id])
 
-  const activeFolder = folders.find((f) => f.id === activeFolderId) ?? null
-  const { files, refetch: refetchFiles } = useFolder(activeFolderId)
+  // Derive active tab and its primary folder for the sources panel
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
+  const primaryFolderId = activeTab?.folderIds[0] ?? null
+  const primaryFolder = folders.find((f) => f.id === primaryFolderId) ?? null
+
+  const { files, refetch: refetchFiles } = useFolder(primaryFolderId)
 
   function handleReindex() {
     refetchFolders()
@@ -41,8 +51,14 @@ export function AppShell() {
   }
 
   function handleDelete(folder: { id: string }) {
-    if (activeFolderId === folder.id) {
-      setActiveFolderId(null)
+    for (const tab of tabs) {
+      if (tab.folderIds.includes(folder.id)) {
+        if (tab.folderIds.length === 1) {
+          closeTab(tab.id)
+        } else {
+          removeFolderFromTab(tab.id, folder.id)
+        }
+      }
     }
     refetchFolders()
   }
@@ -55,22 +71,23 @@ export function AppShell() {
     <TooltipProvider delayDuration={400}>
       <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100 overflow-hidden">
         <TopBar
-          activeFolder={activeFolder}
-          folders={folders}
           user={user}
           onSignIn={() => signIn('google')}
           onSignOut={() => signOut()}
         />
 
         <div className="flex flex-1 min-h-0 overflow-hidden">
-          {/* Sidebar — hidden on collapse */}
           <AnimatePresence>
             {!sidebarCollapsed && (
-              <Sidebar folders={folders} isLoading={foldersLoading} onReindex={handleReindex} onDelete={handleDelete} />
+              <Sidebar
+                folders={folders}
+                isLoading={foldersLoading}
+                onReindex={handleReindex}
+                onDelete={handleDelete}
+              />
             )}
           </AnimatePresence>
 
-          {/* Sidebar collapsed — show expand handle */}
           {sidebarCollapsed && (
             <button
               onClick={() => useUIStore.getState().toggleSidebar()}
@@ -81,7 +98,11 @@ export function AppShell() {
             </button>
           )}
 
-          <MainWorkspace activeFolder={activeFolder} files={files} />
+          <MainWorkspace
+            allFolders={folders}
+            primaryFolder={primaryFolder}
+            files={files}
+          />
         </div>
 
         <AddFolderModal onFolderAdded={handleReindex} />

@@ -31,7 +31,7 @@ interface AddFolderModalProps {
 
 export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
   const { addFolderModalOpen, setAddFolderModalOpen } = useUIStore()
-  const { setActiveFolderId } = useChatStore()
+  const { addTab } = useChatStore()
 
   const [url, setUrl] = useState('')
   const [step, setStep] = useState<ModalStep>('input')
@@ -96,7 +96,7 @@ export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
 
       setStep('done')
       setTimeout(() => {
-        setActiveFolderId(MOCK_FOLDERS[0].id) // use existing mock folder
+        addTab([MOCK_FOLDERS[0].id]) // open a chat tab for the new folder
         onFolderAdded?.()
         setAddFolderModalOpen(false)
         setTimeout(reset, 300)
@@ -129,7 +129,7 @@ export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
         if (statusData.status.status === 'indexed') {
           setStep('done')
           setTimeout(() => {
-            setActiveFolderId(folder.id)
+            addTab([folder.id]) // open a chat tab for the new folder
             onFolderAdded?.()
             setAddFolderModalOpen(false)
             setTimeout(reset, 300)
@@ -146,7 +146,7 @@ export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
       setStep('error')
       setError(err instanceof Error ? err.message : 'Something went wrong')
     }
-  }, [url, setActiveFolderId, setAddFolderModalOpen])
+  }, [url, addTab, setAddFolderModalOpen])
 
   const isValidUrl = IS_MOCK || !!extractFolderIdFromUrl(url.trim())
 
