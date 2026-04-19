@@ -78,10 +78,14 @@ export async function updateFolderStatus(
     errorMessage?: string | null
   },
 ): Promise<void> {
+  // Clear progressJson on any status change so the status route never reads stale data
+  const clearProgress = true
+
   await prisma.indexedFolder.update({
     where: { id: folderId },
     data: {
       status,
+      ...(clearProgress && { progressJson: null }),
       ...(extra?.fileCount !== undefined && { fileCount: extra.fileCount }),
       ...(extra?.chunkCount !== undefined && { chunkCount: extra.chunkCount }),
       ...(extra?.lastIndexed !== undefined && { lastIndexed: extra.lastIndexed }),

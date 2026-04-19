@@ -5,6 +5,11 @@ import { getOrCreateSession, saveUserMessage, chat } from '@/services/chat-servi
 import { getFolderById } from '@/services/folder-service'
 import type { ChatRequest, StreamChunk } from '@/types'
 
+// Raise the serverless function timeout to 5 minutes.
+// Required on Vercel Pro — prevents long answers (broad summaries, large folders)
+// from being cut off mid-stream. Default is 30s on Hobby, 300s on Pro.
+export const maxDuration = 300
+
 // ---------------------------------------------------------------------------
 // In-memory rate limiter — 20 requests per user per 60 seconds
 // ---------------------------------------------------------------------------

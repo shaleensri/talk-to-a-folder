@@ -1,0 +1,35 @@
+doc viewer fucntionality.
+
+right now we have:
+left tab - 
+- workspace 
+    - chats
+    - folders
+middle tab - 
+    - chat
+    - top bar has folders context for that particular chat. 
+right tab - 
+    - sources tab with sources
+    - files tab with files list
+    - debug tab
+
+new look:
+- make the main middle tab a document viewer
+- whatever files are readable (text, docx, pdf) should be viewable on that middle part. 
+- the left tab will just be folders and indeted inside will the files inside the folders 
+- the right side will be the chat currently we have as the main middle tab. 
+
+details - 
+- the left tab will have the folders with the files indented. each file will be clickable and will open in the doc viewer tab.
+    - reindexing will also take place on this left tab
+    - new chat wont open if user just clicks a folder here. this is just folder viewer and file selector(?) and reindexing
+- the middle tab (doc viewer ) will show file currently opened by user (clicked by). doesnt matter which file the chat is talking about. 
+    - the doc viewer will only work for valid files. for rest display message 
+    - while reading the doc, user can select/highlight certain text that opens a right-click box with options: ask chat, copy.
+        - ask chat option will have a arrow that goes one level deeper. asking user to open already created chat (only ones with this file's folder in its context already) or create a new chat with this folder context. 
+- the right tab will have 'chats' at the top with a dropdown symbol that opens up to all chats. create chat icon on the top or right. 
+    - only one chat opens at one time. can toggle between chats by usig dropdown. 
+    - under chatname, user can see folder context and can add remove folders from context.
+    - when user reaches a chat via selecting/highighting text on document, that text part should be referenced in the chat in same way how claude or chatgpt deal with it. to show user that this text is being referenced. 
+
+
