@@ -95,6 +95,7 @@ model DriveFile {
   size        Int?
   status      String  @default("pending") // pending | parsing | indexed | error | skipped
   errorMessage String?
+  summary     String? // LLM-generated 3-5 sentence summary of full file content
   parsedAt    DateTime?
   createdAt   DateTime @default(now())
 

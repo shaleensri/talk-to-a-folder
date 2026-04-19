@@ -1,0 +1,19 @@
+Applicant Requirements for Neighborhood Pantry Mobile App
+
+The application must support three roles: coordinator, volunteer, and family member. Coordinators can create pickup windows, approve donor pledges, edit inventory counts, and view reports. Volunteers can claim shifts, cancel within the allowed window, and receive reminders. Family members can view appointment instructions and confirm or cancel pickups.
+
+Accessibility requirements:
+- All core flows must work on mobile screens as small as 360px wide.
+- Text must be readable at browser default zoom and at 200 percent zoom.
+- Form errors must be visible in text, not only color.
+- SMS reminders must include a plain-language appointment summary.
+
+Privacy requirements:
+- Household information is visible only to coordinators.
+- Volunteers never see family eligibility notes.
+- Appointment exports must omit private notes unless explicitly requested by an administrator.
+
+Operational requirements:
+- The coordinator dashboard must load the current day first.
+- Staff must be able to print the pickup list.
+- Inventory warnings should appear when stock falls below the configured threshold.

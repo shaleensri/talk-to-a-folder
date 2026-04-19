@@ -30,13 +30,18 @@ const confidenceConfig = {
     icon: AlertCircle,
     className: 'text-zinc-500 border-zinc-700 bg-zinc-800/50',
   },
+  off_topic: {
+    label: 'Not in folder',
+    icon: AlertCircle,
+    className: 'text-zinc-500 border-zinc-700 bg-zinc-800/50',
+  },
 }
 
 export function AnswerMetadata({ metadata }: AnswerMetadataProps) {
   const config = confidenceConfig[metadata.confidence]
   const Icon = config.icon
 
-  if (metadata.confidence === 'unsupported') return null
+  if (metadata.confidence === 'unsupported' || metadata.confidence === 'off_topic') return null
 
   return (
     <motion.div

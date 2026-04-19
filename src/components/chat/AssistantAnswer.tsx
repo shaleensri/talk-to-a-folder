@@ -111,6 +111,7 @@ function AnswerContent({
 
 export function AssistantAnswer({ message }: AssistantAnswerProps) {
   const isUnsupported = message.metadata?.confidence === 'unsupported'
+  const isOffTopic = message.metadata?.confidence === 'off_topic'
   const displayContent = message.isStreaming
     ? message.streamedContent ?? ''
     : message.content
@@ -132,13 +133,13 @@ export function AssistantAnswer({ message }: AssistantAnswerProps) {
         className={cn(
           'flex-1 min-w-0 rounded-xl border px-4 py-3.5',
           'transition-shadow duration-200',
-          isUnsupported
+          isUnsupported && !isOffTopic
             ? 'border-white/[0.05] bg-zinc-900/30'
             : 'border-l-2 border-l-indigo-500/35 border-t border-r border-b border-white/[0.06] bg-zinc-900/80 backdrop-blur-sm shadow-[0_4px_24px_rgba(0,0,0,0.5),0_1px_0_rgba(255,255,255,0.04)_inset] group-hover:shadow-[0_8px_32px_rgba(0,0,0,0.6),0_1px_0_rgba(255,255,255,0.04)_inset] transition-shadow duration-300',
         )}
       >
-        {/* Unsupported answer banner */}
-        {isUnsupported && (
+        {/* Unsupported answer banner — not shown for off_topic */}
+        {isUnsupported && !isOffTopic && (
           <div className="flex items-center gap-2 mb-3 text-xs text-amber-400/80 bg-amber-500/5 border border-amber-500/15 rounded-lg px-3 py-2">
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
             Couldn't find strong evidence in the folder for this question

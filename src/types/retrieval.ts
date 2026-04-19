@@ -29,6 +29,7 @@ export interface RetrievedChunk {
 
 export interface RetrievalDebugInfo {
   query: string
+  intent: string
   retrievedChunks: RetrievedChunk[]
   selectedChunkIds: string[]
   totalRetrieved: number

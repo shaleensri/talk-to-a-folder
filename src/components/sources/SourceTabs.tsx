@@ -8,14 +8,13 @@ import { FolderTree } from './FolderTree'
 import { DebugPanel } from './DebugPanel'
 import { useUIStore } from '@/store/ui-store'
 import { useChatStore } from '@/store/chat-store'
-import type { IndexedFolder, DriveFile } from '@/types'
+import type { FolderWithFiles } from '@/hooks/useTabFolders'
 
 interface SourceTabsProps {
-  activeFolder: IndexedFolder | null
-  files: DriveFile[]
+  folderFiles: FolderWithFiles[]
 }
 
-export function SourceTabs({ activeFolder, files }: SourceTabsProps) {
+export function SourceTabs({ folderFiles }: SourceTabsProps) {
   const { rightPanelTab, setRightPanelTab } = useUIStore()
   const { tabs, activeTabId } = useChatStore()
   const activeTab = tabs.find((t) => t.id === activeTabId)
@@ -75,7 +74,7 @@ export function SourceTabs({ activeFolder, files }: SourceTabsProps) {
 
       <TabsContent value="folder-view" className="flex-1 mt-0 min-h-0">
         <ScrollArea className="h-full">
-          <FolderTree folder={activeFolder} files={files} />
+          <FolderTree folderFiles={folderFiles} />
         </ScrollArea>
       </TabsContent>
 

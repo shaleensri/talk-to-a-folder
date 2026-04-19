@@ -11,18 +11,18 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { SOURCES_PANEL_WIDTH } from '@/constants'
 import { cn } from '@/lib/utils'
-import type { IndexedFolder, DriveFile } from '@/types'
+import type { IndexedFolder } from '@/types'
+import type { FolderWithFiles } from '@/hooks/useTabFolders'
 
 const MIN_SOURCES_WIDTH = 240
 const MAX_SOURCES_WIDTH = 640
 
 interface MainWorkspaceProps {
   allFolders: IndexedFolder[]
-  primaryFolder: IndexedFolder | null
-  files: DriveFile[]
+  folderFiles: FolderWithFiles[]
 }
 
-export function MainWorkspace({ allFolders, primaryFolder, files }: MainWorkspaceProps) {
+export function MainWorkspace({ allFolders, folderFiles }: MainWorkspaceProps) {
   const { rightPanelOpen, setRightPanelOpen } = useUIStore()
   const { tabs, activeTabId } = useChatStore()
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
@@ -119,7 +119,7 @@ export function MainWorkspace({ allFolders, primaryFolder, files }: MainWorkspac
 
             {/* Sources panel — fixed to current sourcesWidth */}
             <div style={{ width: sourcesWidth }} className="flex-shrink-0 overflow-hidden">
-              <SourcesPanel activeFolder={primaryFolder} files={files} />
+              <SourcesPanel folderFiles={folderFiles} />
             </div>
           </motion.div>
         )}

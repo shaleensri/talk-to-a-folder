@@ -299,6 +299,7 @@ function makeDebugInfo(query: string, citations: Citation[]): RetrievalDebugInfo
 
   return {
     query,
+    intent: 'targeted_fact',
     retrievedChunks: allChunks,
     selectedChunkIds: citations.map((c) => c.chunkId),
     totalRetrieved: allChunks.length,
@@ -461,6 +462,7 @@ export function getMockResponse(question: string): MockChatResponse {
           selected: false,
         },
       ],
+      intent: 'targeted_fact',
       selectedChunkIds: [],
       totalRetrieved: 2,
       totalSelected: 0,

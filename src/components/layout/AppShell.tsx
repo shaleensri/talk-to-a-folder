@@ -11,7 +11,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { useUIStore } from '@/store/ui-store'
 import { useChatStore } from '@/store/chat-store'
 import { useFolders } from '@/hooks/useFolders'
-import { useFolder } from '@/hooks/useFolder'
+import { useTabFolders } from '@/hooks/useTabFolders'
 import { IntroAnimation } from './IntroAnimation'
 
 const IS_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
@@ -38,12 +38,11 @@ export function AppShell() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id])
 
-  // Derive active tab and its primary folder for the sources panel
+  // Derive active tab folders for the sources panel
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
-  const primaryFolderId = activeTab?.folderIds[0] ?? null
-  const primaryFolder = folders.find((f) => f.id === primaryFolderId) ?? null
+  const activeTabFolderIds = activeTab?.folderIds ?? []
 
-  const { files, refetch: refetchFiles } = useFolder(primaryFolderId)
+  const { folderFiles, refetch: refetchFiles } = useTabFolders(activeTabFolderIds)
 
   function handleReindex() {
     refetchFolders()
@@ -100,8 +99,7 @@ export function AppShell() {
 
           <MainWorkspace
             allFolders={folders}
-            primaryFolder={primaryFolder}
-            files={files}
+            folderFiles={folderFiles}
           />
         </div>
 

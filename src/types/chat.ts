@@ -1,4 +1,4 @@
-export type ConfidenceLevel = 'high' | 'medium' | 'low' | 'unsupported'
+export type ConfidenceLevel = 'high' | 'medium' | 'low' | 'unsupported' | 'off_topic'
 
 export interface Citation {
   id: string

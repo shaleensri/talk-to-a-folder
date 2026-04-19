@@ -14,8 +14,11 @@ function loadChatService(options: {
   const retrieval = {
     selectedChunks: [],
     isSupported: true,
+    folderIds: ['folder-1'],
+    intent: 'targeted_fact',
     debugInfo: {
       query: 'Question?',
+      intent: 'targeted_fact',
       retrievedChunks: [],
       selectedChunkIds: [],
       totalRetrieved: 0,

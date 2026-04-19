@@ -1,3 +1,4 @@
+import OpenAI from 'openai'
 import { parseFile } from '@/lib/file-parsers'
 import { chunkText } from '@/lib/chunker'
 import { embeddings } from '@/lib/embeddings'
@@ -8,6 +9,7 @@ import {
   discoverAndSaveFiles,
 } from './folder-service'
 import { prisma } from '@/lib/prisma'
+import { MAX_FILE_SIZE_BYTES } from '@/constants'
 import type { IndexedFolder, DriveFile, IngestionProgress } from '@/types'
 
 // In-memory progress map so the status polling endpoint can read it
@@ -60,12 +62,16 @@ export async function ingestFolder(
     // 2. Delete old chunks for this folder so re-indexing is clean
     await vectorStore.deleteByFolder(folderId)
 
-    // 3. Process each file
+    // 3. Process each file: parse → chunk → embed (sequential for stable progress tracking)
     let parsed = 0
     let indexed = 0
     let failed = 0
     let skipped = 0
     let totalChunks = 0
+
+    // Collect parsed content for files that were successfully indexed,
+    // so we can summarize them in parallel after the main loop.
+    const toSummarize: { fileId: string; fileName: string; content: string }[] = []
 
     for (const file of files) {
       setProgress({
@@ -82,9 +88,17 @@ export async function ingestFolder(
       })
 
       try {
+        // Skip files that exceed the size limit before attempting to parse
+        if (file.size && file.size > MAX_FILE_SIZE_BYTES) {
+          await updateFileStatus(file.id, 'skipped', {
+            errorMessage: 'File exceeds the 20 MB size limit and was not indexed. Split it into smaller files to index it.',
+          })
+          skipped++
+          continue
+        }
+
         await updateFileStatus(file.id, 'parsing')
 
-        // Parse file content
         const parsedFile = await parseFile(file, accessToken)
 
         if (!parsedFile.content.trim()) {
@@ -98,7 +112,6 @@ export async function ingestFolder(
 
         parsed++
 
-        // Chunk the text
         const chunks = chunkText(parsedFile.content, file.id, folderId)
 
         if (chunks.length === 0) {
@@ -107,11 +120,9 @@ export async function ingestFolder(
           continue
         }
 
-        // Embed all chunks (batch for efficiency)
         const texts = chunks.map((c) => c.text)
         const embeddingVectors = await embeddings.embedBatch(texts)
 
-        // Upsert into vector store
         await vectorStore.upsert(
           chunks.map((chunk, i) => ({
             id: chunk.id,
@@ -130,12 +141,52 @@ export async function ingestFolder(
         indexed++
 
         await updateFileStatus(file.id, 'indexed', { parsedAt: new Date() })
+
+        // Queue for parallel summary generation below
+        toSummarize.push({ fileId: file.id, fileName: file.name, content: parsedFile.content })
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
         console.error(`Failed to process file ${file.name}:`, message)
         await updateFileStatus(file.id, 'error', { errorMessage: message })
         failed++
       }
+    }
+
+    // 4. Generate summaries in parallel batches of 5.
+    //    All files are already indexed above — summaries are non-blocking and non-fatal.
+    const SUMMARY_BATCH_SIZE = 5
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+
+    for (let i = 0; i < toSummarize.length; i += SUMMARY_BATCH_SIZE) {
+      const batch = toSummarize.slice(i, i + SUMMARY_BATCH_SIZE)
+      await Promise.all(
+        batch.map(async ({ fileId, fileName, content }) => {
+          try {
+            const contentForSummary = content.slice(0, 8000)
+            const summaryRes = await openai.chat.completions.create({
+              model: 'gpt-4o-mini',
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    'Summarize this document in 3-5 sentences for a retrieval system. ' +
+                    'Cover: what the document is, its main topics, and any notable specific content. ' +
+                    'Be concrete and specific — avoid vague phrases like "this document covers...".',
+                },
+                { role: 'user', content: `FILE: ${fileName}\n\n${contentForSummary}` },
+              ],
+              temperature: 0,
+              max_tokens: 200,
+            })
+            const summary = summaryRes.choices[0]?.message?.content?.trim()
+            if (summary) {
+              await prisma.driveFile.update({ where: { id: fileId }, data: { summary } })
+            }
+          } catch {
+            // Summary generation failed — file is still indexed, just without a summary
+          }
+        }),
+      )
     }
 
     // 4. Mark folder as indexed

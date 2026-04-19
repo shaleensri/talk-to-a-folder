@@ -1,17 +1,16 @@
 'use client'
 
 import { SourceTabs } from './SourceTabs'
-import type { IndexedFolder, DriveFile } from '@/types'
+import type { FolderWithFiles } from '@/hooks/useTabFolders'
 
 interface SourcesPanelProps {
-  activeFolder: IndexedFolder | null
-  files: DriveFile[]
+  folderFiles: FolderWithFiles[]
 }
 
-export function SourcesPanel({ activeFolder, files }: SourcesPanelProps) {
+export function SourcesPanel({ folderFiles }: SourcesPanelProps) {
   return (
     <div className="flex flex-col h-full bg-zinc-950">
-      <SourceTabs activeFolder={activeFolder} files={files} />
+      <SourceTabs folderFiles={folderFiles} />
     </div>
   )
 }

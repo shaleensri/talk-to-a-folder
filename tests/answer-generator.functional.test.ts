@@ -21,8 +21,11 @@ function makeRetrieval(chunks: RetrievedChunk[], isSupported = true): RetrievalR
   return {
     selectedChunks: chunks,
     isSupported,
+    folderIds: ['folder-1'],
+    intent: 'targeted_fact',
     debugInfo: {
       query: 'Question?',
+      intent: 'targeted_fact',
       retrievedChunks: chunks,
       selectedChunkIds: chunks.map((chunk) => chunk.chunkId),
       totalRetrieved: chunks.length,

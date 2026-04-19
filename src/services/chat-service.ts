@@ -11,7 +11,7 @@ import type { ChatResponse } from '@/types'
 
 // Contextual references that suggest the query depends on prior conversation
 const CONTEXTUAL_RE =
-  /\b(that|those|it|them|this|same|another|other|rest|more about|else|above|mentioned|previous|last|the file|the document|the folder|expand|elaborate|tell me more|what about|how about|what else|go deeper|more detail|the one|those files)\b/i
+  /\b(that|those|it|them|this|same|another|other|rest|more about|else|above|mentioned|previous|last|the file|the document|the folder|expand|elaborate|tell me more|what about|how about|what else|go deeper|more detail|the one|those files|what can i say|what should i say|what do i say|how should i answer|what to say|they ask|if asked|follow up|next question)\b/i
 
 /**
  * If the query contains contextual references (e.g. "that file", "tell me more"),
@@ -139,16 +139,25 @@ export async function chat(
     take: HISTORY_TURNS + 1, // +1 because the current user message was just saved
     select: { role: true, content: true },
   })
-  // Reverse to chronological order, drop the last message (current query already in prompt)
+  // Reverse to chronological order, drop the last message (current query already in prompt).
+  // Trim assistant messages to ~400 chars so prior long answers don't crowd the LLM context —
+  // we want the model to know what was discussed, not repeat it verbatim.
+  const ASSISTANT_HISTORY_LIMIT = 400
   const history = recentMessages
     .reverse()
     .slice(0, -1)
-    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+    .map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content:
+        m.role === 'assistant' && m.content.length > ASSISTANT_HISTORY_LIMIT
+          ? m.content.slice(0, ASSISTANT_HISTORY_LIMIT) + '…'
+          : m.content,
+    }))
 
   // Rewrite vague follow-up queries into self-contained ones before retrieval
   const effectiveQuery = await rewriteQueryIfNeeded(query, history)
 
-  const retrieval = await retrieve(effectiveQuery, folderIds)
+  const retrieval = await retrieve(effectiveQuery, folderIds, history)
 
   // Build folder name map for multi-folder labeling
   const folderRecords = await prisma.indexedFolder.findMany({

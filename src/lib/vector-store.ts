@@ -10,8 +10,12 @@ import { TOP_K_RETRIEVAL } from '@/constants'
 export interface VectorStore {
   upsert(records: VectorRecord[]): Promise<void>
   query(embedding: number[], topK: number, filter?: { folderIds?: string[] }): Promise<VectorMatch[]>
-  /** Returns the first chunk of every file in the given folders — used for full-folder summarization. */
+  /** Returns the first chunk of every file in the given folders — fallback for files without summaries. */
   getFirstChunksPerFile(folderIds: string[]): Promise<VectorMatch[]>
+  /** Returns all chunks for a specific file in order — used for single_file_deep queries. */
+  getAllChunksForFile(fileId: string): Promise<VectorMatch[]>
+  /** Returns top-K chunks for a specific file ranked by query similarity — used when file is too large for full context. */
+  queryFile(embedding: number[], fileId: string, topK: number): Promise<VectorMatch[]>
   delete(ids: string[]): Promise<void>
   deleteByFolder(folderId: string): Promise<void>
 }
@@ -141,6 +145,63 @@ export class PrismaVectorStore implements VectorStore {
         chunkIndex: chunk.chunkIndex,
       },
     }))
+  }
+
+  async getAllChunksForFile(fileId: string): Promise<VectorMatch[]> {
+    const chunks = await prisma.textChunk.findMany({
+      where: { fileId },
+      orderBy: { chunkIndex: 'asc' },
+      select: {
+        id: true,
+        text: true,
+        folderId: true,
+        fileId: true,
+        chunkIndex: true,
+        file: { select: { name: true } },
+      },
+    })
+
+    return chunks.map((chunk) => ({
+      id: chunk.id,
+      score: 1.0,
+      metadata: {
+        folderId: chunk.folderId,
+        fileId: chunk.fileId,
+        fileName: chunk.file.name,
+        text: chunk.text,
+        chunkIndex: chunk.chunkIndex,
+      },
+    }))
+  }
+
+  async queryFile(embedding: number[], fileId: string, topK: number): Promise<VectorMatch[]> {
+    const chunks = await prisma.textChunk.findMany({
+      where: { fileId, embedding: { not: null } },
+      select: {
+        id: true,
+        text: true,
+        folderId: true,
+        fileId: true,
+        chunkIndex: true,
+        embedding: true,
+        file: { select: { name: true } },
+      },
+    })
+
+    return chunks
+      .map((chunk) => ({
+        id: chunk.id,
+        score: cosineSimilarity(embedding, JSON.parse(chunk.embedding!)),
+        metadata: {
+          folderId: chunk.folderId,
+          fileId: chunk.fileId,
+          fileName: chunk.file.name,
+          text: chunk.text,
+          chunkIndex: chunk.chunkIndex,
+        },
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, topK)
   }
 
   async delete(ids: string[]): Promise<void> {

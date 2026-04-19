@@ -42,8 +42,11 @@ const mockRetrieval = {
     },
   ],
   isSupported: true,
+  folderIds: ['folder-1'],
+  intent: 'targeted_fact',
   debugInfo: {
     query: 'test query',
+    intent: 'targeted_fact',
     retrievedChunks: [],
     selectedChunkIds: ['chunk-1'],
     totalRetrieved: 1,

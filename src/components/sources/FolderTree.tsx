@@ -6,10 +6,10 @@ import { listContainer, listItem } from '@/constants/animations'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn, formatFileSize } from '@/lib/utils'
 import type { DriveFile, IndexedFolder } from '@/types'
+import type { FolderWithFiles } from '@/hooks/useTabFolders'
 
 interface FolderTreeProps {
-  folder: IndexedFolder | null
-  files: DriveFile[]
+  folderFiles: FolderWithFiles[]
 }
 
 function FileIcon({ mimeType }: { mimeType: string }) {
@@ -32,17 +32,9 @@ const DEFAULT_ERROR_MSG: Record<string, string> = {
   skipped: 'File was skipped — no usable text content found.',
 }
 
-export function FolderTree({ folder, files }: FolderTreeProps) {
-  if (!folder) {
-    return (
-      <div className="flex items-center justify-center h-24 text-xs text-zinc-600">
-        No folder selected
-      </div>
-    )
-  }
-
+function FolderSection({ folder, files }: { folder: IndexedFolder; files: DriveFile[] }) {
   return (
-    <div className="space-y-3 p-3">
+    <div className="space-y-3">
       {/* Folder header */}
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2.5">
         <div className="flex items-center justify-between">
@@ -82,7 +74,6 @@ export function FolderTree({ folder, files }: FolderTreeProps) {
                 <p className="text-[10px] text-zinc-600">{formatFileSize(file.size)}</p>
               )}
             </div>
-            {/* Status dot — with tooltip for error/skipped */}
             {(file.status === 'error' || file.status === 'skipped') ? (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -103,6 +94,24 @@ export function FolderTree({ folder, files }: FolderTreeProps) {
           </motion.div>
         ))}
       </motion.div>
+    </div>
+  )
+}
+
+export function FolderTree({ folderFiles }: FolderTreeProps) {
+  if (folderFiles.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-24 text-xs text-zinc-600">
+        No folder selected
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6 p-3">
+      {folderFiles.map(({ folder, files }) => (
+        <FolderSection key={folder.id} folder={folder} files={files} />
+      ))}
     </div>
   )
 }
