@@ -12,16 +12,29 @@ import { prisma } from '@/lib/prisma'
 import { MAX_FILE_SIZE_BYTES } from '@/constants'
 import type { IndexedFolder, DriveFile, IngestionProgress } from '@/types'
 
-// In-memory progress map so the status polling endpoint can read it
-// In a production system this would live in Redis or a DB field
-const progressMap = new Map<string, IngestionProgress>()
+// ---------------------------------------------------------------------------
+// Progress tracking — stored in DB so any serverless instance can read it
+// ---------------------------------------------------------------------------
 
-export function getIngestionProgress(folderId: string): IngestionProgress | null {
-  return progressMap.get(folderId) ?? null
+export async function getIngestionProgress(folderId: string): Promise<IngestionProgress | null> {
+  const folder = await prisma.indexedFolder.findUnique({
+    where: { id: folderId },
+    select: { progressJson: true },
+  })
+  if (!folder?.progressJson) return null
+  try {
+    return JSON.parse(folder.progressJson) as IngestionProgress
+  } catch {
+    return null
+  }
 }
 
-function setProgress(update: IngestionProgress) {
-  progressMap.set(update.folderId, update)
+// Fire-and-forget — progress writes are informational and must never block ingestion
+function setProgress(update: IngestionProgress): void {
+  prisma.indexedFolder.update({
+    where: { id: update.folderId },
+    data: { progressJson: JSON.stringify(update) },
+  }).catch(() => {})
 }
 
 // ---------------------------------------------------------------------------
@@ -37,7 +50,7 @@ export async function ingestFolder(
   // Mark folder as ingesting
   await updateFolderStatus(folderId, 'ingesting', { errorMessage: null })
 
-  setProgress({
+  await setProgress({
     folderId,
     status: 'ingesting',
     progress: { total: 0, parsed: 0, indexed: 0, failed: 0, skipped: 0 },
@@ -47,7 +60,7 @@ export async function ingestFolder(
     // 1. Discover files from Drive
     const files = await discoverAndSaveFiles(folder, accessToken)
 
-    setProgress({
+    await setProgress({
       folderId,
       status: 'ingesting',
       progress: {
@@ -197,7 +210,7 @@ export async function ingestFolder(
       errorMessage: null,
     })
 
-    setProgress({
+    await setProgress({
       folderId,
       status: 'indexed',
       progress: {
@@ -217,11 +230,13 @@ export async function ingestFolder(
 
     await updateFolderStatus(folderId, 'error', { errorMessage: message })
 
-    setProgress({
+    // Read the last known progress from DB before writing the error state
+    const lastProgress = await getIngestionProgress(folderId)
+    await setProgress({
       folderId,
       status: 'error',
       errorMessage: message,
-      progress: progressMap.get(folderId)?.progress ?? {
+      progress: lastProgress?.progress ?? {
         total: 0,
         parsed: 0,
         indexed: 0,

@@ -1,12 +1,11 @@
 // Prisma schema for Talk to a Folder
-// Uses SQLite for dev (zero external services). Swap DATABASE_URL to postgres:// for prod.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -67,18 +66,19 @@ model VerificationToken {
 // ---------------------------------------------------------------------------
 
 model IndexedFolder {
-  id          String   @id @default(cuid())
-  name        String
-  driveUrl    String
-  folderId    String                    // Google Drive folder ID
-  status      String   @default("idle") // idle | ingesting | indexed | error
-  fileCount   Int      @default(0)
-  chunkCount  Int      @default(0)
-  lastIndexed DateTime?
+  id           String   @id @default(cuid())
+  name         String
+  driveUrl     String
+  folderId     String                    // Google Drive folder ID
+  status       String   @default("idle") // idle | ingesting | indexed | error
+  fileCount    Int      @default(0)
+  chunkCount   Int      @default(0)
+  lastIndexed  DateTime?
   errorMessage String?
-  userId      String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  progressJson String?  // JSON: IngestionProgress — written during ingestion for cross-instance polling
+  userId       String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   files DriveFile[]
@@ -111,8 +111,8 @@ model TextChunk {
   chunkIndex Int
   startChar  Int
   endChar    Int
-  // Embedding stored as JSON array of floats (SQLite compat)
-  // For Postgres, use pgvector extension instead
+  // Embedding stored as JSON array of floats.
+  // Future: migrate to pgvector for native vector similarity queries.
   embedding  String? // JSON: number[]
   createdAt  DateTime @default(now())
 

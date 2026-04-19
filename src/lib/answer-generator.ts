@@ -88,10 +88,50 @@ export async function generateAnswer(
 ): Promise<GeneratedAnswer> {
   const startMs = Date.now()
 
-  // Off-topic: skip LLM entirely, return a friendly nudge
+  // Off-topic: short LLM response that handles small talk naturally while
+  // gently keeping the user aware this is a document assistant
   if (retrieval.intent === 'off_topic') {
-    const offTopicAnswer = "I'm focused on your documents — ask me anything about what's in your folder. You can request summaries, dig into specific files, compare across folders, or ask questions about the content."
-    if (streamCallback) streamCallback(offTopicAnswer)
+    const offTopicClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    let offTopicAnswer = ''
+
+    const offTopicMessages: OpenAI.ChatCompletionMessageParam[] = [
+      {
+        role: 'system',
+        content:
+          'You are a friendly document assistant. The user said something that isn\'t a question about their documents. ' +
+          'Reply naturally and briefly (1-2 sentences max). ' +
+          'For thanks/appreciation: acknowledge warmly and invite more questions about their documents. ' +
+          'For greetings: say hi and briefly mention you can help them explore their documents (summaries, questions, comparisons). ' +
+          'For farewells: say goodbye warmly. ' +
+          'For anything else off-topic: kindly note you\'re focused on their documents and what you can help with. ' +
+          'Never be robotic or repeat the same phrase. Keep it natural and conversational.',
+      },
+      ...history.slice(-2).map((m) => ({ role: m.role, content: m.content })),
+      { role: 'user', content: query },
+    ]
+
+    if (streamCallback) {
+      const stream = await offTopicClient.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: offTopicMessages,
+        stream: true,
+        temperature: 0.7,
+        max_tokens: 80,
+      })
+      for await (const chunk of stream) {
+        const token = chunk.choices[0]?.delta?.content ?? ''
+        if (token) { offTopicAnswer += token; streamCallback(token) }
+      }
+    } else {
+      const res = await offTopicClient.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: offTopicMessages,
+        temperature: 0.7,
+        max_tokens: 80,
+      })
+      offTopicAnswer = res.choices[0]?.message?.content ?? ''
+    }
+
     return {
       answer: offTopicAnswer,
       citations: [],
@@ -100,7 +140,7 @@ export async function generateAnswer(
         chunksUsed: 0,
         confidence: 'off_topic',
         latencyMs: Date.now() - startMs,
-        model: CHAT_MODEL,
+        model: 'gpt-4o-mini',
       },
     }
   }

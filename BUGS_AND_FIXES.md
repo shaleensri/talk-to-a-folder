@@ -513,6 +513,190 @@ Wrap the export in a try/catch that parses the JSON error, extracts `error.messa
 
 ---
 
+---
+
+## 25. Off-topic classifier misclassifying document questions as small talk
+
+**Symptom**
+"What are my chances with this investor pitch?" returned the generic "I'm focused on your documents" canned response instead of actually searching the documents.
+
+**Root cause**
+The `off_topic` examples in the classifier prompt were too broad. "What are my chances" superficially resembles casual phrasing, so gpt-4o-mini classified it as off_topic rather than targeted_fact.
+
+**Fix**
+Tightened the `off_topic` definition to *pure greetings only* (sup, hey, thanks, lol). Added explicit examples showing analytical/evaluative questions ("what are my chances", "how strong is this", "what would an investor think") map to `targeted_fact`. Added rule: "when in doubt, choose targeted_fact".
+
+Also added rule 4 to `CITATION_SYSTEM_PROMPT`: give a direct assessment for evaluative questions rather than deflecting.
+
+---
+
+## 26. Follow-up questions generating the same answer as the previous turn
+
+**Symptom**
+"If they ask me about my future plans, what can I say?" generated an answer nearly identical to the previous "what are my chances" answer about the application folder.
+
+**Root cause**
+Two compounding issues:
+1. The full previous assistant answer (800+ words) was included verbatim in conversation history passed to the LLM. The model anchored on it and reproduced similar content.
+2. "what can I say" didn't match the CONTEXTUAL_RE regex, so query rewriting wasn't triggered. The query embedded similarly to the previous one, pulling the same document chunks.
+
+**Fix**
+1. Truncate assistant messages in history to 400 characters before passing to the LLM — enough for context, not enough to dominate the response.
+2. Expanded CONTEXTUAL_RE to catch "what can I say", "what should I say", "they ask", "if asked", "how should I answer" patterns so these queries get rewritten into self-contained form before retrieval.
+
+---
+
+## 27. Inline bold (`**text**`) rendered as literal asterisks
+
+**Symptom**
+Answers showed `**Data-Driven Decision Making**: Implement advanced analytics…` with visible asterisks instead of bold text.
+
+**Root cause**
+The custom `AnswerContent` renderer split lines by `[N]` citation markers only. Inline `**bold**` patterns were passed through as plain strings with no transformation.
+
+**Fix**
+Updated `parseWithCitations` to split on both `\*\*[^*]+\*\*` and `\[\d+\]` in one regex pass. Bold segments are wrapped in `<strong className="font-semibold text-zinc-100">`. The standalone full-line bold check was updated to use a proper regex (`/^\*\*[^*]+\*\*$/`) instead of the fragile `startsWith`/`endsWith` check.
+
+---
+
+## 28. Vercel build failed: stale Prisma client
+
+**Symptom**
+Build failed with `PrismaClientInitializationError: Prisma has detected that this project was built on Vercel, which caches dependencies. This leads to an outdated Prisma Client because Prisma's auto-generation isn't triggered.`
+
+**Root cause**
+Vercel caches `node_modules` between builds. The `postinstall` hook that normally runs `prisma generate` is skipped when the cache is used. The compiled Prisma client was stale and didn't match the current schema.
+
+**Fix**
+Prepend `prisma generate` to the build script in `package.json`:
+```json
+"build": "prisma generate && next build"
+```
+
+---
+
+## 29. Ingestion progress not visible during indexing in production
+
+**Symptom**
+The progress bar didn't update during indexing on Vercel. Status polling always returned the fallback (DB folder row) rather than live per-file progress.
+
+**Root cause**
+Progress was stored in a `Map` in-memory (`progressMap`). On Vercel, each polling request hits a different serverless Lambda instance with no shared memory — the `Map` on the instance running ingestion is invisible to the instance serving `/status`.
+
+**Fix**
+Replaced in-memory `progressMap` with a `progressJson String?` column on `IndexedFolder`. `setProgress` writes JSON to this column; `getIngestionProgress` reads it. Both the ingestion and polling functions hit the same Postgres DB, so progress is visible across instances.
+
+---
+
+## 30. `setProgress` DB writes blocking ingestion past Vercel's 30s timeout
+
+**Symptom**
+Ingestion of a 5-file folder got stuck on `ingesting` in production. Files were being indexed but `updateFolderStatus('indexed')` never ran.
+
+**Root cause**
+Each `await setProgress(...)` call made a DB write to Neon. When Neon is waking from autosuspend, each write adds 1–3s of latency. With one `setProgress` call per file plus several others, the total wait on progress writes alone pushed the ingestion past Vercel Hobby's 30s function timeout. The function was killed before reaching `updateFolderStatus('indexed')`.
+
+**Fix**
+Made `setProgress` fire-and-forget (removed `await`). Progress writes are informational — they should never block the ingestion pipeline. The critical status writes (`updateFolderStatus`) remain awaited.
+
+```typescript
+function setProgress(update: IngestionProgress): void {
+  prisma.indexedFolder.update({ ... }).catch(() => {})  // no await
+}
+```
+
+---
+
+## 31. Vercel Lambda frozen after 202 response, ingestion never completing
+
+**Symptom**
+Even after removing the blocking `setProgress` awaits, reindexing still occasionally got stuck. The ingestion function was being killed mid-way through.
+
+**Root cause**
+Vercel serverless (AWS Lambda) can freeze or terminate the execution context after a response is sent. The fire-and-forget `ingestFolder().catch()` pattern relied on the Lambda staying alive, which is non-deterministic.
+
+**Fix**
+Used `waitUntil()` from `@vercel/functions`. This explicitly registers the background promise with the Vercel runtime, guaranteeing it runs to completion (up to `maxDuration`) even after the 202 response is sent.
+
+```typescript
+import { waitUntil } from '@vercel/functions'
+waitUntil(ingestFolder(folder, accessToken).catch(console.error))
+return NextResponse.json({ message: 'Ingestion started' }, { status: 202 })
+```
+
+---
+
+## 32. Double ingest call resetting folder status to `ingesting`
+
+**Symptom**
+After a successful reindex, the folder status reverted to `ingesting`. DB showed `fileCount: 5`, `lastIndexed` set (completion ran), but `status: 'ingesting'`.
+
+**Root cause**
+A second call to `POST /api/folders/[id]/ingest` was received while the first ingestion was completing. The second call immediately set `status = 'ingesting'` via `updateFolderStatus`, overwriting the `indexed` state set by the first.
+
+**Fix**
+Added a guard in the ingest route: if `folder.status === 'ingesting'`, return 202 immediately without starting a new pipeline.
+
+```typescript
+if (folder.status === 'ingesting') {
+  return NextResponse.json({ message: 'Already ingesting' }, { status: 202 })
+}
+```
+
+---
+
+## 33. Stale `progressJson` caused polling to stop before new reindex completed
+
+**Symptom**
+After reindexing, the folder status pill showed `ingesting` even after the index completed. Refreshing the page showed the same.
+
+Separately: the file count on the folder card showed the old count (5) instead of the new count (6) after a file was added and the folder was reindexed.
+
+**Root cause**
+`progressJson` was only cleared on terminal states (`indexed`, `error`). When a new reindex started:
+1. `updateFolderStatus('ingesting')` ran — set `status = 'ingesting'`, left `progressJson` intact
+2. `progressJson` still contained `{"status":"indexed",...}` from the previous run
+3. The status polling read `progressJson`, saw `status: 'indexed'`, assumed indexing was done, and called `onReindex()` immediately — before the new ingestion had run
+4. `refetchFolders()` ran and showed the old `fileCount`
+
+**Fix**
+Clear `progressJson` on ALL status changes, not just terminal ones:
+
+```typescript
+// src/services/folder-service.ts
+const clearProgress = true  // clear on every status change
+```
+
+This ensures the status route always falls back to the authoritative `IndexedFolder.status` and `fileCount` fields rather than stale cached JSON.
+
+---
+
+## 34. Neon autosuspend causing PostgreSQL connection errors
+
+**Symptom**
+Vercel logs showed repeated `Error in PostgreSQL connection: FATAL: terminating connection due to administrator command` (SQL state E57P01).
+
+**Root cause**
+Neon free tier suspends the compute after 5 minutes of inactivity. When Prisma held open persistent TCP connections and Neon suspended, those connections were forcibly terminated. New requests then failed until the connection was re-established.
+
+**Fix**
+Switch from the direct Neon connection string to the **pooled** connection string (pgBouncer). The pooled URL has `-pooler` in the hostname. pgBouncer manages connection lifecycle and handles the suspend/wake cycle gracefully. Serverless functions should always use pooled connections with Neon.
+
+---
+
+## 35. Off-topic responses always identical regardless of message
+
+**Symptom**
+"thanks", "bye", "hey", and any other off-topic message all received the exact same response: "I'm focused on your documents — ask me anything about what's in your folder…"
+
+**Root cause**
+Off-topic was handled with a hardcoded string rather than a language model call.
+
+**Fix**
+Replaced the static string with a short `gpt-4o-mini` call using a system prompt that instructs the model to reply naturally: acknowledge thanks warmly, say hello back to greetings, give a proper farewell to "bye", and only redirect to document features when the message has no clear conversational response. `max_tokens: 80` keeps it brief and cheap.
+
+---
+
 ## Summary
 
 | # | Area | Type | Impact |
@@ -541,3 +725,14 @@ Wrap the export in a try/catch that parses the JSON error, extracts `error.messa
 | 22 | Retrieval | Similarity bias in summarization | 11 of 12 files invisible to overview queries |
 | 23 | Retrieval | Stateless embeddings | Follow-up questions ignored prior context |
 | 24 | File parsing | Raw JSON error surfaced to user | Unreadable error messages in Files panel |
+| 25 | Retrieval / Intent | Classifier too aggressive | Document questions treated as small talk |
+| 26 | Chat | History pollution + missing rewrite | Follow-up generated same answer as prior turn |
+| 27 | UI | Missing markdown renderer | Bold text shown as literal asterisks |
+| 28 | Build / Deployment | Stale Prisma client on Vercel | Production build failed |
+| 29 | Deployment | In-memory progress not shared | Progress bar never updated in production |
+| 30 | Deployment | Blocking progress writes | Ingestion killed by 30s timeout before completion |
+| 31 | Deployment | Lambda frozen after response | Ingestion randomly failed to complete |
+| 32 | Deployment | Double ingest call | Status reset to ingesting after successful completion |
+| 33 | Deployment | Stale progressJson not cleared | Polling stopped early, file count showed wrong number |
+| 34 | Deployment | Neon autosuspend killing connections | PostgreSQL connection errors in production |
+| 35 | UI / LLM | Static off-topic response | All small talk got identical robotic reply |

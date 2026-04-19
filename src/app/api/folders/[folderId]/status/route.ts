@@ -24,10 +24,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
     return NextResponse.json<ApiResponse<never>>({ error: 'Not found' }, { status: 404 })
   }
 
-  // Check for live in-memory progress first
-  const liveProgress = getIngestionProgress(params.folderId)
-  if (liveProgress) {
-    return NextResponse.json({ status: liveProgress })
+  // Read progress written to DB during ingestion (works across serverless instances)
+  const dbProgress = await getIngestionProgress(params.folderId).catch(() => null)
+  if (dbProgress) {
+    return NextResponse.json({ status: dbProgress })
   }
 
   // Fall back to a progress object derived from the DB folder row
