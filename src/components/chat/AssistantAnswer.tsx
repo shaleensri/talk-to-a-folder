@@ -17,18 +17,29 @@ interface AssistantAnswerProps {
 }
 
 /**
- * Parses text like "...friction [1] and portability [2]..." into React nodes
- * with CitationBadge components in-place for each [N] marker.
+ * Parses text like "**Bold term**: some detail [1] and more [2]..." into React nodes,
+ * rendering **bold** as <strong> and [N] as CitationBadge components.
  */
 function parseWithCitations(
   text: string,
   citations: Citation[],
 ): React.ReactNode[] {
-  const parts = text.split(/(\[\d+\])/g)
+  // Split on both **bold** markers and [N] citation markers in one pass
+  const parts = text.split(/(\*\*[^*]+\*\*|\[\d+\])/g)
   return parts.map((part, i) => {
-    const match = part.match(/^\[(\d+)\]$/)
-    if (match) {
-      const index = parseInt(match[1])
+    // Inline bold: **text**
+    const boldMatch = part.match(/^\*\*([^*]+)\*\*$/)
+    if (boldMatch) {
+      return (
+        <strong key={`b-${i}`} className="font-semibold text-zinc-100">
+          {boldMatch[1]}
+        </strong>
+      )
+    }
+    // Citation badge: [N]
+    const citMatch = part.match(/^\[(\d+)\]$/)
+    if (citMatch) {
+      const index = parseInt(citMatch[1])
       const citation = citations.find((c) => c.index === index)
       if (citation) {
         return <CitationBadge key={`cit-${i}`} citation={citation} />
@@ -84,11 +95,11 @@ function AnswerContent({
           )
         }
 
-        // Bold text with **
-        if (line.startsWith('**') && line.endsWith('**') && line.length > 4) {
+        // Standalone bold line (e.g. "**Section Header**") — render as a section label
+        if (/^\*\*[^*]+\*\*$/.test(line.trim())) {
           return (
             <p key={lineIdx} className="text-sm font-semibold text-zinc-200 mt-3 mb-0.5">
-              {line.slice(2, -2)}
+              {line.trim().slice(2, -2)}
             </p>
           )
         }
