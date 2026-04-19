@@ -1,0 +1,20 @@
+Product Application Plan: Neighborhood Pantry Mobile App
+
+Purpose
+The Neighborhood Pantry mobile app helps local food banks coordinate donations, volunteer shifts, and family pickup appointments. The first release focuses on reducing phone calls, preventing duplicate bookings, and giving staff a single daily operations view.
+
+Primary Users
+Food bank coordinators need a dashboard that shows inventory, pickup slots, donor pledges, and volunteer capacity. Volunteers need a simple shift calendar and reminders. Families need private appointment booking, language-friendly instructions, and clear pickup requirements.
+
+Core Features
+1. Appointment scheduling with household-size-based pickup windows.
+2. Donation intake forms for grocery stores, restaurants, and individual donors.
+3. Volunteer shift signup with automatic capacity limits.
+4. Inventory alerts for staple categories such as rice, beans, diapers, and formula.
+5. Coordinator dashboard with daily pickup count, low-stock warnings, and no-show tracking.
+
+Launch Scope
+The pilot will include one pantry location, English and Spanish copy, SMS reminders, and administrator-managed user accounts. Public self-registration for families is intentionally out of scope for the pilot because staff want to validate privacy and eligibility workflows first.
+
+Success Metrics
+The pilot is successful if staff phone scheduling time drops by 40 percent, pickup no-shows drop below 10 percent, and at least 70 percent of volunteers use the app for shift confirmation by the end of month two.

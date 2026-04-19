@@ -1,511 +1,423 @@
 # Talk to a Folder
 
-A production-quality AI web app that lets you connect a Google Drive folder and have a grounded, cited conversation with its contents. Built for an AI-forward engineering take-home — engineered like a serious product, not a hackathon demo.
+A production-quality RAG web app that lets you connect a Google Drive folder and have a grounded, cited conversation with its contents.
 
 ---
 
 ## FOR AI AGENTS: PICK-UP GUIDE
 
-**If you are an AI agent continuing this build, start here.** This section tells you everything you need to know to pick up exactly where work stopped.
+**If you are an AI agent continuing work on this project, start here.**
 
-### Current state (as of last session)
+### Current state
 
-**62 files have been written. The app cannot run yet.** The entire UI layer, all types, all stores, all hooks, all backend lib abstractions, and the mock data engine are complete. What is missing is the thin wiring layer: file parsers, services, and API routes. These are the last 15 files needed to make the app runnable.
+The app is fully runnable end-to-end. Every layer — UI, hooks, stores, lib, file parsers, services, API routes — is implemented. There is no scaffolding or placeholder code. The app handles real Google Drive folders with real OpenAI calls and streams answers via SSE.
 
-### Exactly what to build next
-
-Build these files **in this order** (each depends on the previous):
-
-#### Step 1 — File parsers (`src/lib/file-parsers/`)
-
-Create 5 files. These parse raw Drive content into plain text for chunking.
-
-**`src/lib/file-parsers/index.ts`**
-- Export a `FileParser` interface: `{ canParse(mimeType: string): boolean; parse(content: string | Buffer, meta: { fileId, fileName, mimeType }): Promise<ParsedFile> }`
-- Export a `parserRegistry: FileParser[]`
-- Export a `getParser(mimeType: string): FileParser | null` function that walks the registry
-- Import and register: `GoogleDocParser`, `GoogleSheetParser`, `PDFParser`, `PlainTextParser`
-
-**`src/lib/file-parsers/google-doc.ts`**
-- Handles mimeType `application/vnd.google-apps.document`
-- Input is already plain text (exported from Drive API as `text/plain`)
-- Strip extra whitespace, normalize line breaks
-- Return `ParsedFile` with the cleaned text
-
-**`src/lib/file-parsers/google-sheet.ts`**
-- Handles mimeType `application/vnd.google-apps.spreadsheet`
-- Input is CSV (exported from Drive API as `text/csv`)
-- Parse CSV rows into a readable text format: `"Column1: value, Column2: value"` per row
-- Include sheet name as a header if available
-
-**`src/lib/file-parsers/pdf.ts`**
-- Handles mimeType `application/pdf`
-- Input is a `Buffer`
-- Use the `pdf-parse` npm package: `import pdfParse from 'pdf-parse'`
-- Return extracted `.text` from the result
-
-**`src/lib/file-parsers/plain-text.ts`**
-- Handles mimeTypes: `text/plain`, `text/markdown`, `text/csv`
-- Input is a string
-- Minimal cleanup: trim, normalize line endings
-- Return as-is
-
-The `ParsedFile` type already exists in `src/types/retrieval.ts`:
-```typescript
-interface ParsedFile {
-  fileId: string
-  fileName: string
-  mimeType: string
-  content: string
-  metadata?: Record<string, unknown>
-}
+Run it with:
+```bash
+npm install && npx prisma db push && npm run dev
 ```
+
+Or in demo mode (no credentials): `NEXT_PUBLIC_MOCK_MODE=true npm run dev`
 
 ---
 
-#### Step 2 — Services (`src/services/`)
+### Implemented since initial build
 
-Create 3 files. These are the orchestration layer — they call lib functions and write to the database.
+These were gaps that have since been closed — do not re-implement:
 
-**`src/services/folder-service.ts`**
+- **Rate limiting** — `POST /api/chat` has an in-memory rate limiter (20 req/user/60s) at the top of [src/app/api/chat/route.ts](src/app/api/chat/route.ts). Returns HTTP 429 with a human-readable retry message.
+- **Error toasts** — `sonner` is installed. `<Toaster />` is in [src/app/layout.tsx](src/app/layout.tsx). [src/hooks/useChat.ts](src/hooks/useChat.ts) calls `toast.error()` on non-2xx responses, SSE `error` chunks, and network failures.
+- **TiltCard hooks fix** — `useTransform` calls were incorrectly placed inside JSX `style` props in [src/components/ui/TiltCard.tsx](src/components/ui/TiltCard.tsx). Moved to component top level as `innerX`/`innerY`.
+- **Multi-tab / per-folder sessions** — chat store replaced the flat `{ messages, sessionId, activeFolderId }` shape with `tabs: ChatTab[]` + `activeTabId`. Each tab holds its own `folderIds`, `sessionId`, `messages`, and `currentCitations`. Switching folders opens a new tab; switching back restores its conversation. Implemented in [src/store/chat-store.ts](src/store/chat-store.ts).
+- **Chat history persistence** — on authenticated load, `AppShell` fetches `GET /api/sessions` (20 most-recent sessions) and calls `loadFromHistory()`, reconstructing tabs from DB without overwriting any already-open tabs.
+- **Cross-folder comparison (#7)** — [src/lib/retrieval.ts](src/lib/retrieval.ts) accepts `folderIds: string[]` (plural). For multi-folder queries, retrieval uses two-pass balanced selection (floor(TOP_K/N) minimum per folder, then global fill). [src/lib/answer-generator.ts](src/lib/answer-generator.ts) labels each chunk with `[Folder: Name]` and selects `CROSS_FOLDER_SYSTEM_PROMPT` for comparison queries.
+- **Summarization fix** — "summarize" queries bypass cosine similarity entirely. [src/lib/vector-store.ts](src/lib/vector-store.ts) `getFirstChunksPerFile()` returns `chunkIndex=0` for every file, guaranteeing all files are represented regardless of how their content embeds. The system prompt also mandates every file be mentioned.
+- **Query rewriting** — [src/services/chat-service.ts](src/services/chat-service.ts) calls `rewriteQueryIfNeeded()` before retrieval. A `gpt-4o-mini` call resolves contextual pronouns ("that file", "tell me more") into self-contained questions using recent history. Gated by a `CONTEXTUAL_RE` regex to avoid unnecessary API calls; falls back silently on error.
+- **Re-index staleness detection** — [src/components/folders/FolderCard.tsx](src/components/folders/FolderCard.tsx) shows an amber timestamp + warning icon with tooltip when `lastIndexed` is more than 24 hours ago.
+- **File error/skip reasons** — [src/components/sources/FolderTree.tsx](src/components/sources/FolderTree.tsx) wraps skipped/error status dots in a `Tooltip` showing `file.errorMessage`. Ingestion service sets `errorMessage` on skipped (empty/image-only) files.
+- **Drag-to-resize panel divider** — [src/components/layout/MainWorkspace.tsx](src/components/layout/MainWorkspace.tsx) replaced the static `Separator` with a 5px drag handle. `mousedown` / `mousemove` / `mouseup` on `window` track delta from drag start; panel width clamped to 240–640px.
+- **Legacy format error messages** — `.doc` and `.ppt` files (OLE2 binary, not supported by any parser) now throw clear user-facing errors with instructions to convert to `.docx` / `.pptx`. [src/lib/file-parsers/index.ts](src/lib/file-parsers/index.ts).
+- **Google Drive 500 retry** — [src/lib/google-drive.ts](src/lib/google-drive.ts) `exportGoogleFile()` retries once after 2s on HTTP 500/503 from Google's export API, with a cleaned error message on second failure.
 
-Functions to implement:
-```typescript
-createFolder(userId: string, driveUrl: string, accessToken: string): Promise<IndexedFolder>
-// - Extract folder ID from URL using extractFolderIdFromUrl() from lib/utils.ts
-// - Call getFolderName() from lib/google-drive.ts to get the name
-// - Write to prisma.indexedFolder.create()
-// - Return the created folder
+### Codex: implemented during testing pass
 
-getFolder(folderId: string, userId: string): Promise<IndexedFolder | null>
-// - prisma.indexedFolder.findFirst({ where: { id: folderId, userId } })
+These changes were added by Codex after the app was already functionally complete. They are meant to help the next coding agent understand the current test coverage and avoid redoing the same harness work.
 
-listFolders(userId: string): Promise<IndexedFolder[]>
-// - prisma.indexedFolder.findMany({ where: { userId }, orderBy: { updatedAt: 'desc' } })
+- **Codex: Node test harness** — added [tests/register.cjs](tests/register.cjs) and [tests/run.cjs](tests/run.cjs). The harness runs TypeScript tests with Node's built-in test runner, transpiles `.ts` files through `typescript.transpileModule`, and resolves the `@/` alias to `src/`.
+- **Codex: test scripts** — added category scripts to [package.json](package.json):
+  - `npm test`
+  - `npm run test:unit`
+  - `npm run test:functional`
+  - `npm run test:smoke`
+  - `npm run test:blackbox`
+- **Codex: unit tests** — added tests for utility helpers, chunking behavior, and lightweight parser cleanup:
+  - [tests/utils.unit.test.ts](tests/utils.unit.test.ts)
+  - [tests/chunker.unit.test.ts](tests/chunker.unit.test.ts)
+  - [tests/file-parsers.unit.test.ts](tests/file-parsers.unit.test.ts)
+- **Codex: functional tests** — added mocked functional tests for the highest-risk backend flows:
+  - [tests/chat-route.functional.test.ts](tests/chat-route.functional.test.ts) — `POST /api/chat` auth errors, validation, folder ownership, indexed-state validation, SSE payload shape, message trimming, session reuse, and rate limiting.
+  - [tests/folder-routes.functional.test.ts](tests/folder-routes.functional.test.ts) — folder list/create/get/delete/status/files/ingest route behavior with mocked auth/services/token lookup.
+  - [tests/ingestion-service.functional.test.ts](tests/ingestion-service.functional.test.ts) — parse → chunk → embed → index pipeline, skipped empty files, parser failures, final folder status, progress tracking, and Drive discovery failure handling.
+  - [tests/retrieval.functional.test.ts](tests/retrieval.functional.test.ts) — query embedding, folder-scoped vector search, selected chunks/debug metadata, and broad-query spread strategy.
+  - [tests/answer-generator.functional.test.ts](tests/answer-generator.functional.test.ts) — unsupported fallback, citation parsing, invalid citation marker handling, confidence scoring, history injection, debug latency updates, and streaming callback behavior.
+  - [tests/chat-service.functional.test.ts](tests/chat-service.functional.test.ts) — session reuse/creation, user/assistant message persistence, history shaping, retrieval call, answer generation call, streaming callback, and response assembly.
+  - [tests/file-parser-dispatcher.functional.test.ts](tests/file-parser-dispatcher.functional.test.ts) — MIME-type dispatch for Google Docs/Sheets, PDF, plain text, Markdown, CSV, Word, Excel, PowerPoint, and unsupported MIME errors.
+- **Codex: smoke tests** — added [tests/app.smoke.test.ts](tests/app.smoke.test.ts), which checks that the main app entry points, API routes, services, parser files, and test scripts exist.
+- **Codex: black-box tests** — added public-contract tests:
+  - [tests/chat-store.blackbox.test.ts](tests/chat-store.blackbox.test.ts) — chat store message/session behavior through public actions.
+  - [tests/file-parsers.blackbox.test.ts](tests/file-parsers.blackbox.test.ts) — common `ParsedFile` return shape for text-like parsers.
+- **Codex: current test status** — as of this update, `npm test` passes with **49 tests / 13 suites / 0 failures**. `npm run test:functional` passes with **33 tests / 7 suites / 0 failures**.
 
-deleteFolder(folderId: string, userId: string): Promise<void>
-// - prisma.indexedFolder.delete()
-// - Also delete vector embeddings: vectorStore.deleteByFolder(folderId)
+### Integration tests (real SQLite DB)
 
-updateFolderStatus(folderId: string, status: FolderStatus, extra?: Partial<IndexedFolder>): Promise<void>
-// - prisma.indexedFolder.update()
-```
+Added after Codex's functional pass. These use a real SQLite test DB (`prisma/test.db`) and real Prisma queries. Only OpenAI and Google Drive are mocked. Run with `npm run test:integration` (pushes schema to test DB first via `prisma db push --force-reset`).
 
-**`src/services/ingestion-service.ts`**
-
-This is the most important service. It orchestrates the full parse → chunk → embed → index pipeline.
-
-```typescript
-startIngestion(folder: IndexedFolder, accessToken: string): Promise<void>
-```
-
-Implementation steps inside `startIngestion`:
-1. Set folder status to `'ingesting'` via `updateFolderStatus()`
-2. Call `listFolderFiles(folder.folderId, accessToken, folder.id)` from `lib/google-drive.ts`
-3. Write all `DriveFile` records to `prisma.driveFile.createMany()`
-4. Update `folder.fileCount`
-5. For each file:
-   a. Update file status to `'parsing'`
-   b. Get the parser: `getParser(file.mimeType)` — skip if null (set status `'skipped'`)
-   c. Fetch content: use `exportGoogleFile()` for Docs/Sheets, `downloadFile()` for PDFs/text
-   d. Parse: `parser.parse(content, { fileId: file.id, fileName: file.name, mimeType: file.mimeType })`
-   e. Chunk: `chunkText(parsed.content, file.id, folder.id)` from `lib/chunker.ts`
-   f. Embed batch: `embeddings.embedBatch(chunks.map(c => c.text))` from `lib/embeddings.ts`
-   g. Upsert to vector store: `vectorStore.upsert(records)` — records map chunk + embedding to `VectorRecord`
-   h. Update file status to `'indexed'`, set `parsedAt`
-6. Update folder status to `'indexed'`, set `lastIndexed`, `chunkCount`
-7. On any file error: set file status to `'error'`, store `errorMessage`, continue to next file
-8. On total failure: set folder status to `'error'`
-
-```typescript
-getIngestionStatus(folderId: string): Promise<IngestionProgress>
-// Query folder + files from DB and build an IngestionProgress object
-// progress.total = total files
-// progress.parsed = files with status 'indexed' | 'error' | 'skipped'
-// progress.indexed = files with status 'indexed'
-// progress.failed = files with status 'error'
-// currentFile = first file with status 'parsing'
-```
-
-**`src/services/chat-service.ts`**
-
-```typescript
-chat(folderId: string, message: string, sessionId?: string): Promise<{ sessionId: string; response: ChatResponse }>
-// 1. Get or create a ChatSession in DB
-// 2. Call retrieve(message, folderId) from lib/retrieval.ts
-// 3. Call generateAnswer(message, retrieval) from lib/answer-generator.ts
-// 4. Persist user message + assistant message to DB (JSON.stringify citations/metadata/debug)
-// 5. Return { sessionId, response: { messageId, sessionId, answer, citations, metadata, debug } }
-
-chatStream(folderId: string, message: string, sessionId: string | undefined, onToken: (token: string) => void): Promise<{ sessionId: string; response: ChatResponse }>
-// Same as chat() but passes onToken callback to generateAnswer() for streaming
-```
+- **[tests/integration/setup.ts](tests/integration/setup.ts)** — shared `testPrisma` client, `injectTestPrisma()` cache patcher, `clearDatabase()`, and seed helpers (`seedUser`, `seedFolder`, `seedFile`).
+- **[tests/integration/folder-service.integration.test.ts](tests/integration/folder-service.integration.test.ts)** — `getFoldersForUser` ownership isolation, `getFolderById` cross-user denial, `updateFolderStatus` partial field merge, `deleteFolder` CASCADE to child files, `upsertFiles` update-not-insert behavior, `discoverAndSaveFiles` re-index duplicate prevention.
+- **[tests/integration/vector-store.integration.test.ts](tests/integration/vector-store.integration.test.ts)** — `upsert` JSON embedding serialization, cosine similarity ranking, `topK` cap, `folderId` filter isolation, cross-folder queries, `deleteByFolder` cleanup, `fileName` join from `DriveFile`.
+- **[tests/integration/chat-persistence.integration.test.ts](tests/integration/chat-persistence.integration.test.ts)** — `getOrCreateSession` create/reuse/phantom-id, `saveUserMessage` role/content, `saveAssistantMessage` JSON round-trip for citations/metadata/debugInfo, `chat()` message persistence, `chat()` history loading order.
+- **Current status** — `npm run test:integration` passes with **28 tests / 3 suites / 0 failures**.
 
 ---
 
-#### Step 3 — API routes (`src/app/api/`)
+### Known gaps — what to build next
 
-Create 7 route files. All routes must:
-- Check `getServerSession(authOptions)` and return 401 if no session
-- Return `{ data: ... }` on success, `{ error: '...' }` on failure
-- Use try/catch and return appropriate HTTP status codes
+These are the remaining meaningful things left. Each has implementation notes.
 
-**`src/app/api/auth/[...nextauth]/route.ts`**
-```typescript
-import NextAuth from 'next-auth'
-import { authOptions } from '@/lib/auth'
-const handler = NextAuth(authOptions)
-export { handler as GET, handler as POST }
-```
+#### 1. File size guard in the API before fetching
 
-**`src/app/api/folders/route.ts`**
-- `GET`: call `listFolders(session.user.id)`, return `{ data: { folders } }`
-- `POST`: parse body for `driveUrl`, get user's Drive access token from DB (`prisma.account.findFirst`), call `createFolder()`, then start ingestion in background (`startIngestion()` — do not await, fire and forget), return `{ data: { folder } }`
+**Problem**: `MAX_FILE_SIZE_BYTES = 20MB` is defined in constants but never checked before downloading a file from Drive. Large files will silently consume memory.
 
-To get the access token:
-```typescript
-const account = await prisma.account.findFirst({
-  where: { userId: session.user.id, provider: 'google' }
-})
-const accessToken = account?.access_token
-```
+**Where to add**: [src/lib/file-parsers/index.ts](src/lib/file-parsers/index.ts) or [src/services/ingestion-service.ts](src/services/ingestion-service.ts). Each `DriveFile` has a `size` field — check it before calling `parseFile()` and mark oversized files as `'skipped'` with an `errorMessage`.
 
-**`src/app/api/folders/[folderId]/route.ts`**
-- `GET`: call `getFolder(folderId, userId)`, return folder
-- `DELETE`: call `deleteFolder(folderId, userId)`, return `{ data: { ok: true } }`
+---
 
-**`src/app/api/folders/[folderId]/ingest/route.ts`**
-- `POST`: fetch folder from DB, get access token, call `startIngestion(folder, accessToken)` — fire and forget (don't await), return `{ data: { started: true } }` immediately
+#### 5. Cross-folder comparison / multi-folder chat
 
-**`src/app/api/folders/[folderId]/status/route.ts`**
-- `GET`: call `getIngestionStatus(folderId)`, return `{ data: { status } }`
+**Current limitation**: Retrieval is scoped to one folder — `WHERE folderId = activeFolder`. Even if conversation history mentions content from another folder, GPT-4o can't re-retrieve from it. Switching folders starts a new retrieval scope.
 
-**`src/app/api/folders/[folderId]/files/route.ts`**
-- `GET`: `prisma.driveFile.findMany({ where: { folderId } })`, return `{ data: { files } }`
+**What this means for users**: You can't ask "Folder A says X — does Folder B agree?" and get a grounded answer from both. GPT-4o can only compare what's in the current folder's retrieved chunks against whatever is in the conversation history as plain text.
 
-**`src/app/api/chat/route.ts`**
+**What full cross-folder support would require**:
 
-This is the most complex route. It must support streaming via Server-Sent Events (SSE).
+1. **Retrieval** — change `retrieve(query, folderId)` to `retrieve(query, folderIds: string[])` in [src/lib/retrieval.ts](src/lib/retrieval.ts). The vector store query already supports arbitrary filters — just remove the single-folder constraint.
+
+2. **Citations** — add `folderName` to the `Citation` type so the UI can show which folder each chunk came from.
+
+3. **UI** — a way to select which folders are in scope. Simplest: checkboxes next to each folder in the sidebar. Or a "search all folders" toggle.
+
+4. **Prompt** — tell GPT-4o it's working across multiple folders so it attributes answers correctly: "According to [Folder A]... whereas [Folder B] says..."
+
+5. **Session model** — per-folder sessions (see note below on session design) would need to be extended to support multi-folder sessions.
+
+**Effort**: Medium. Retrieval and prompt changes are small. The UI selection pattern is the most design work.
+
+---
+
+#### 6. Per-folder chat sessions (better than global clear)
+
+**Current behavior**: Switching folders clears messages and `sessionId`. Simple but lossy — if you switch back to folder A, the conversation is gone.
+
+**Better model**: Store a separate `{ sessionId, messages }` per folder in the chat store:
 
 ```typescript
-export async function POST(req: Request) {
-  // 1. Auth check
-  // 2. Parse { folderId, message, sessionId? } from body
-  // 3. Create a ReadableStream
-  // 4. Inside the stream:
-  //    a. Call retrieve(message, folderId) — send debug info as SSE
-  //    b. Call generateAnswer() with a token callback that sends each token as SSE
-  //    c. After generation: send citations, metadata as SSE
-  //    d. Send [DONE]
-  //    e. Persist messages to DB
-  // 5. Return: new Response(stream, { headers: { 'Content-Type': 'text/event-stream', ... } })
-}
+// chat-store.ts
+sessions: Record<string, { sessionId: string | null; messages: ChatMessage[] }>
 ```
 
-SSE format (each line):
-```
-data: {"type":"token","payload":"word "}
-data: {"type":"citations","payload":[...]}
-data: {"type":"metadata","payload":{...}}
-data: {"type":"debug","payload":{...}}
-data: [DONE]
-```
+Switching folders would just change which slot is active — each folder's conversation is preserved independently. Switching back to folder A picks up exactly where you left off.
+
+**Where to change**: [src/store/chat-store.ts](src/store/chat-store.ts) (restructure state), [src/components/layout/Sidebar.tsx](src/components/layout/Sidebar.tsx) (remove `clearMessages()` on select), [src/hooks/useChat.ts](src/hooks/useChat.ts) (read/write into `sessions[activeFolderId]`).
 
 ---
 
-#### Step 4 — Fix package.json
+#### 7. Production vector store swap
 
-Add `"geist": "^1.3.0"` to dependencies. The `layout.tsx` imports from `geist/font/sans` and `geist/font/mono`.
+**Not urgent — but the path is already paved.** The `VectorStore` interface in [src/lib/vector-store.ts](src/lib/vector-store.ts) abstracts the backend. Current impl is `PrismaVectorStore` (SQLite + in-memory cosine). For production scale:
 
----
-
-#### Step 5 — Create .env.local
-
-```
-NEXTAUTH_URL=http://localhost:3000
-NEXTAUTH_SECRET=dev-secret-change-in-prod
-GOOGLE_CLIENT_ID=placeholder
-GOOGLE_CLIENT_SECRET=placeholder
-OPENAI_API_KEY=placeholder
-DATABASE_URL=file:./dev.db
-NEXT_PUBLIC_MOCK_MODE=true
-```
-
-With `NEXT_PUBLIC_MOCK_MODE=true` the app runs fully in mock mode — no real API calls, no DB needed. Demo-able immediately.
+- Implement `PineconeVectorStore` or a `pgvector`-backed store in a new file
+- Export it from `vector-store.ts` alongside the existing one
+- Swap the export: `export const vectorStore = new PineconeVectorStore()`
+- No other file needs to change
 
 ---
 
-### Key patterns already established — follow these exactly
+### Patterns — follow these exactly
 
-**Imports**: Always use `@/` path alias. Never use relative `../../` imports.
+**Imports**: Always `@/` alias. Never relative `../../`.
 
-**Mock mode flag**: Every hook and API route checks `const IS_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'`. In mock mode, return mock data from `src/lib/mock-data.ts` instead of hitting real APIs.
+**Mock mode**: Every hook and API route checks `const IS_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'` and returns mock data from [src/lib/mock-data.ts](src/lib/mock-data.ts) in mock mode.
 
-**API response shape**: Always wrap in `{ data: ... }` on success, `{ error: 'message' }` on failure. No naked objects.
+**API response shape**: `{ data: ... }` on success, `{ error: 'message' }` on failure. No naked objects.
 
-**Styling**: Dark-first. Use `zinc-*` for neutrals, `indigo-*` for accent. Never use `gray-*`. All borders are `zinc-700` or `zinc-800`. Hover states add `zinc-800` background. Active/selected states use `indigo-500/10` background + `indigo-500/20` border.
+**Styling**: `zinc-*` for neutrals, `indigo-*` for accent. Never `gray-*`. Active/selected states use `indigo-500/10` bg + `indigo-500/20` border.
 
-**Animations**: Import variants from `@/constants/animations` (`fadeIn`, `slideUp`, `scaleIn`, `listContainer`, `listItem`, `messageCard`). Use `motion.div` from framer-motion. All interactive elements get `whileHover` and `whileTap`.
+**Types**: Import from `@/types` (barrel export). Never from individual type files inside components.
 
-**Components**: All components are `'use client'`. No server components in the `components/` directory. Server-only code lives in `lib/`, `services/`, and `app/api/`.
-
-**Types**: Import everything from `@/types` (the barrel export in `src/types/index.ts`). Never import from individual type files in components.
-
-**Error handling**: Services and lib functions throw errors with descriptive messages. API routes catch them and return `{ error: err.message }` with the appropriate HTTP status.
-
-**`nanoid` usage**: Use `generateId()` from `src/lib/utils.ts` for client-side IDs. `nanoid` is available but `generateId` wraps `Math.random().toString(36)` for SSR safety.
-
----
-
-### Existing code to read before writing new files
-
-Before writing services and API routes, read these files to understand the existing patterns and types:
-
-| File | Why you need to read it |
-|---|---|
-| `src/lib/mock-data.ts` | Understand mock response shapes — services must return the same structure |
-| `src/lib/retrieval.ts` | Understand `RetrievalResult` type that `chat-service.ts` consumes |
-| `src/lib/answer-generator.ts` | Understand `GeneratedAnswer` type + streaming callback signature |
-| `src/lib/google-drive.ts` | Understand `listFolderFiles()`, `exportGoogleFile()`, `downloadFile()` signatures |
-| `src/lib/chunker.ts` | Understand `chunkText()` return type (`TextChunk[]`) |
-| `src/lib/embeddings.ts` | Understand `EmbeddingProvider` interface + `embeddings` singleton |
-| `src/lib/vector-store.ts` | Understand `VectorRecord` shape for upsert |
-| `src/lib/auth.ts` | Understand `authOptions` export for NextAuth route |
-| `src/types/index.ts` | All shared types |
-| `src/store/ui-store.ts` | UI state atoms — don't duplicate any state here |
-| `src/store/chat-store.ts` | Chat state atoms — services don't touch this; only hooks do |
-| `src/hooks/useChat.ts` | Understand how the frontend consumes the SSE stream |
+**Components**: All `'use client'`. Server-only code lives in `lib/`, `services/`, `app/api/`.
 
 ---
 
 ### What NOT to change
 
-Do not modify any of these — they are finalized:
+These are stable and well-tested — don't touch them unless fixing a specific bug:
 
-- All files in `src/components/` — UI is complete
-- All files in `src/types/` — types are finalized
-- All files in `src/store/` — stores are finalized
-- All files in `src/hooks/` — hooks are finalized
-- All files in `src/constants/` — animation config and constants are finalized
-- `src/lib/utils.ts`, `src/lib/auth.ts`, `src/lib/prisma.ts` — finalized
-- `prisma/schema.prisma` — finalized
-- `tailwind.config.ts`, `next.config.ts` — finalized
+- All files in `src/constants/animations.ts` (Framer Motion variants)
+- `src/lib/chunker.ts`, `src/lib/embeddings.ts`
+- `tailwind.config.ts`, `next.config.mjs`
 
 ---
 
-### Verification checklist after building
+### Key file map
 
-Once all 15 files are written, verify:
-
-1. `npm install` — succeeds (no missing packages)
-2. `npx prisma db push` — succeeds (creates SQLite DB)
-3. `npm run dev` — server starts without TypeScript errors
-4. Open `http://localhost:3000` in mock mode — app renders the full shell
-5. Click "Add folder" — modal opens, ingestion simulation runs, folder appears in sidebar
-6. Click a suggested question — streaming answer appears with citation badges `[1][2][3]`
-7. Hover a citation badge — matching source card in right panel highlights
-8. Click a citation badge — source card expands showing exact chunk text with highlight
-9. Click the "Debug" tab in right panel — retrieved chunks with scores appear
-10. `npm run build` — production build succeeds
-
----
-
----
-
-## Product Vision
-
-Users can:
-1. Authenticate with Google
-2. Paste a Google Drive folder link
-3. Ingest and index the folder contents (Docs, Sheets, PDFs, plain text)
-4. Ask questions about the files in that folder
-5. Receive grounded answers with inline citations
-6. Inspect exact source chunks and retrieval evidence
-
-The UI is a blend of Notion, Perplexity, and Linear: elegant, responsive, fast, with subtle motion and premium spacing.
+| File | What it does |
+|------|-------------|
+| [src/components/layout/AppShell.tsx](src/components/layout/AppShell.tsx) | Root client component — folder selection, session, intro animation |
+| [src/components/layout/AppShell.tsx](src/components/layout/AppShell.tsx) | Root client component — loads history on auth, manages tab/session lifecycle |
+| [src/store/chat-store.ts](src/store/chat-store.ts) | `tabs: ChatTab[]`, `activeTabId`, `loadFromHistory()`, `addTab()` |
+| [src/store/ui-store.ts](src/store/ui-store.ts) | `highlightedCitationId`, panel state, sidebar state |
+| [src/hooks/useChat.ts](src/hooks/useChat.ts) | SSE stream reader, sends `sessionId` on every request |
+| [src/lib/retrieval.ts](src/lib/retrieval.ts) | Cosine search, `getFirstChunksPerFile` summarization path, multi-folder balanced retrieval |
+| [src/lib/answer-generator.ts](src/lib/answer-generator.ts) | GPT-4o call, folder-labeled context, cross-folder/summarization/citation prompts, confidence scoring |
+| [src/services/ingestion-service.ts](src/services/ingestion-service.ts) | Full parse→chunk→embed→index pipeline, in-memory progress map |
+| [src/services/chat-service.ts](src/services/chat-service.ts) | Query rewriting, retrieval + generation orchestration, DB persistence |
+| [src/app/api/chat/route.ts](src/app/api/chat/route.ts) | SSE streaming endpoint |
+| [src/app/api/sessions/route.ts](src/app/api/sessions/route.ts) | `GET /api/sessions` — returns 20 most-recent sessions with messages for history restore |
+| [src/lib/google-auth.ts](src/lib/google-auth.ts) | Auto token refresh using stored `refresh_token` |
+| [src/constants/index.ts](src/constants/index.ts) | All tunable constants: chunk size, score thresholds, model names |
 
 ---
 
-## Original Spec
+## What it does
 
-> Build a beautiful React web app where a user can authenticate with Google, paste in a Google Drive folder link, ingest and index the folder contents, ask questions about the files in that folder, receive grounded answers with citations, and inspect the sources and exact evidence used for the answer.
->
-> The product should feel like a blend of Notion, Perplexity, and Linear: elegant, responsive, fast, subtle motion, premium spacing and typography, strong hover/click states, excellent touch response, smooth transitions, modern and highly polished.
->
-> UX is top priority. Every interaction should feel intentional: soft hover elevation on cards, beautiful transitions, subtle glow/shadow changes, loading skeletons and staged progress indicators, pleasant microanimations, responsive layout, no clunky state changes.
->
-> Citations should be interactive: hovering a citation highlights the matching source on the right panel. Clicking expands the source and scrolls to the exact chunk. Include a Debug tab showing retrieved chunks, similarity scores, and which were selected for final context. Show answer metadata (confidence, files used). Show suggested starter questions after indexing.
->
-> Tech stack: Next.js App Router, TypeScript, Tailwind CSS, Framer Motion, shadcn/ui, Lucide icons, React Query, Zustand. Backend: Next.js API routes. Vector store: Prisma SQLite (dev-friendly, swappable). LLM: OpenAI GPT-4o + text-embedding-3-small.
->
-> Modular structure: layout/, chat/, folders/, sources/, ui/, hooks/, lib/, services/, store/, types/, constants/. Business logic out of presentation components. Clean abstraction boundaries for EmbeddingProvider, VectorStore, FileParser.
+1. **Authenticate** with Google OAuth
+2. **Paste a Google Drive folder link** — the app extracts the folder ID and lists all supported files, including files inside subfolders (up to 5 levels deep)
+3. **Index** — files are parsed, chunked, embedded with `text-embedding-3-small`, and stored in SQLite
+4. **Chat** — ask questions; the app retrieves the most relevant chunks, generates an answer with GPT-4o via SSE streaming, and returns inline citation markers `[1][2][3]`
+5. **Inspect** — hover a citation to highlight the matching source card; click to expand the exact chunk; open the Debug tab to see cosine scores for every retrieved chunk
+
+---
+
+## Current status — fully runnable
+
+All layers are implemented and the app runs end-to-end with real Google credentials and OpenAI keys.
+
+### What's implemented
+
+**Auth & Google integration**
+- NextAuth v4 with Google OAuth (`drive.readonly` scope)
+- Automatic access token refresh using stored `refresh_token` — no re-login required when tokens expire
+- Recursive Google Drive folder traversal (subfolders up to depth 5, up to 200 files total)
+- File names preserve relative path: `subfolder/document.docx`
+
+**File parsing**
+| Format | Parser |
+|--------|--------|
+| Google Docs | Drive API export → plain text |
+| Google Sheets | Drive API export → CSV → `Header: value` rows |
+| PDF | `pdf-parse` |
+| Plain text / Markdown / CSV | passthrough |
+| Word (.docx / .doc) | `mammoth` |
+| Excel (.xlsx / .xls) | `SheetJS` |
+| PowerPoint (.pptx / .ppt) | `officeparser` |
+
+**RAG pipeline**
+- Text chunker: 1800 chars / 200 char overlap
+- Embeddings: `text-embedding-3-small` (1536d), in-memory cosine similarity over SQLite
+- Retrieval: top-8 chunks retrieved, top-5 passed to LLM
+- **Spread strategy** for broad/overview questions: when top score < 0.40, picks the best chunk from each unique file so every file gets representation
+- **Summarization path**: bypasses cosine search entirely — `getFirstChunksPerFile()` fetches `chunkIndex=0` per file, guaranteeing all files appear in context (capped at 12)
+- **Query rewriting**: `gpt-4o-mini` resolves follow-up pronouns ("that file", "tell me more") into self-contained questions before retrieval; gated by contextual-reference regex; fails silently
+- **Multi-folder retrieval**: two-pass balanced selection — Pass 1 fills minimum slots per folder, Pass 2 fills remaining from global top
+- **Folder-labeled context**: each chunk tagged `[Folder: Name] FILE: filename.docx` in multi-folder queries; separate `CROSS_FOLDER_SYSTEM_PROMPT` for comparison queries
+- Conversation memory: last 6 messages are injected as history on follow-up turns
+- Confidence scoring: high ≥ 0.60, medium ≥ 0.45, low below that
+
+**API routes**
+- `POST /api/folders` — create folder, fire-and-forget ingestion
+- `GET /api/folders` — list user's folders
+- `GET/DELETE /api/folders/[id]` — get or delete a folder
+- `POST /api/folders/[id]/ingest` — trigger re-index
+- `GET /api/folders/[id]/status` — ingestion progress (polled by UI)
+- `GET /api/folders/[id]/files` — list indexed files
+- `POST /api/chat` — SSE streaming: `token` → `citations` → `metadata` → `debug` → `[DONE]`; rate limited to 20 req/user/60s, returns 429 with retry time on breach
+- `GET /api/sessions` — returns 20 most-recent sessions with messages, used to restore tabs on page reload
+
+**Error handling**
+- `sonner` toasts on all API failures — rate limit, token expiry, OpenAI errors, network failures
+- SSE `error` chunks (server-side failures mid-stream) surface as toasts, not silent drops
+- `.doc` / `.ppt` (legacy OLE2 formats) throw actionable errors with conversion instructions instead of silently failing
+- Google Drive export 500/503 errors trigger one automatic retry after 2s; 403 surfaces as "Access denied"
+
+**UI**
+- Curtain-lift intro animation on first load (Framer Motion)
+- 3D tilt/parallax hover effect on folder cards and suggested question cards (`TiltCard` component)
+- Floating chat composer with `backdrop-blur` and deep shadow
+- Gradient fade above composer so messages scroll cleanly behind it
+- Dot grid background on message area
+- Two-step inline delete confirmation on folder cards
+- Real-time re-index: button polls `/status` until `indexed`/`error`, then refreshes files panel
+- Right panel: Sources tab (citation cards), Files tab (folder tree), Debug tab (chunk scores)
+- **Drag-to-resize panel divider**: 5px handle between chat and sources panel, width clamped 240–640px
+- **Staleness badge**: amber timestamp + warning icon on folder cards when `lastIndexed` > 24 hours ago
+- **File error tooltips**: hovering skipped/error dots in the Files panel shows the reason (e.g. "No text content found — file may be image-only")
+- **Multi-tab chat**: each folder combination opens in its own tab; switching back restores the conversation; history loaded from DB on page reload
+
+**Mock mode**
+- Set `NEXT_PUBLIC_MOCK_MODE=true` to run the full UI with no credentials
+- Includes a mock "Q4 2024 Product Strategy" folder with 5 files, 4 suggested questions, 3 detailed Q&A pairs, and simulated word-by-word streaming
+
+---
+
+## What's not done yet
+
+| Gap | Notes |
+|-----|-------|
+| File size guard | 20 MB cap in constants but never checked before fetching — oversized files consume memory silently |
+| Production vector store | SQLite + in-memory cosine is fine for hundreds of chunks. For scale: swap `PrismaVectorStore` for Pinecone or `pgvector` — one-file change |
+| Additional testing | Codex added 49 tests across unit, functional, smoke, and black-box layers. Remaining valuable additions: Playwright mock-mode E2E, real fixture tests for PDF/Word/Excel/PowerPoint parser libraries, Google Drive helper tests with mocked `googleapis`, and vector-store tests against a test DB or deeper Prisma mocks |
+| Deployment config | No `vercel.json` or Dockerfile |
 
 ---
 
 ## Architecture
 
-### Data Flow
-
 ```
 User pastes Drive URL
-  → Validate + extract folder ID (lib/utils.ts: extractFolderIdFromUrl)
-  → Fetch file list via Google Drive API (lib/google-drive.ts: listFolderFiles)
-  → Parse each supported file (lib/file-parsers/: GoogleDocParser etc.)
-  → Chunk text into overlapping segments (lib/chunker.ts: chunkText)
-  → Embed each chunk via OpenAI (lib/embeddings.ts: embeddings.embedBatch)
-  → Store chunk + embedding in Prisma (lib/vector-store.ts: vectorStore.upsert)
-  → On query: embed question → cosine similarity search → top-K chunks
-  → Generate answer via GPT-4o with citation prompt (lib/answer-generator.ts)
-  → Return { answer, citations[], metadata, debug } (services/chat-service.ts)
-  → SSE stream tokens to frontend (app/api/chat/route.ts)
-  → Frontend renders answer with inline CitationBadge components
-  → Citation hover → highlight source card (Zustand: ui-store.highlightedCitationId)
-  → Citation click → expand source card, scroll to chunk
+  → Extract folder ID (lib/utils.ts)
+  → Recursive file list via Drive API (lib/google-drive.ts)
+  → Parse each file (lib/file-parsers/)
+  → Chunk text (lib/chunker.ts)
+  → Embed with text-embedding-3-small (lib/embeddings.ts)
+  → Store in SQLite via Prisma (lib/vector-store.ts)
+
+On query:
+  → Rewrite query if it has contextual references (gpt-4o-mini)
+  → Embed effective query
+  → Summarization? → getFirstChunksPerFile (skips cosine search)
+  → Otherwise: cosine similarity search → top-K chunks
+  → Multi-folder? → balanced two-pass retrieval; label chunks [Folder: Name]
+  → Spread strategy if broad question (topScore < 0.40)
+  → Select prompt: citation / summarization / cross-folder comparison
+  → Inject last 6 messages as history
+  → Generate answer via GPT-4o (lib/answer-generator.ts)
+  → SSE stream tokens → citations → metadata → debug
+  → Frontend renders inline CitationBadge components
+  → Citation hover → Zustand atom → SourceCard highlight
 ```
 
-### State Architecture
+### State
 
-- **Zustand `ui-store`**: `highlightedCitationId`, `expandedSourceId`, `rightPanelTab`, `rightPanelOpen`, `sidebarCollapsed`, `addFolderModalOpen`
-- **Zustand `chat-store`**: `messages[]`, `activeFolderId`, `sessionId`, `isStreaming`, `currentCitations`
-- **React Query**: used for server-state caching where needed (optional, hooks currently use plain fetch + useState)
+- **`ui-store`** (Zustand): `highlightedCitationId`, `expandedSourceId`, `rightPanelTab`, `rightPanelOpen`, `sidebarCollapsed`, `addFolderModalOpen`
+- **`chat-store`** (Zustand): `tabs: ChatTab[]`, `activeTabId`. Each tab: `{ id, sessionId, folderIds, messages, isStreaming, currentCitations }`. `loadFromHistory()` reconstructs tabs from DB on page load without overwriting open tabs.
 
-### Abstraction Boundaries
-
-```
-EmbeddingProvider → OpenAIEmbeddingProvider | MockEmbeddingProvider   (lib/embeddings.ts)
-VectorStore       → PrismaVectorStore                                  (lib/vector-store.ts)
-FileParser        → registry pattern                                   (lib/file-parsers/index.ts)
-```
+Citation ↔ source sync is zero-overhead: `CitationBadge` writes `highlightedCitationId`, `SourceCard` reads it — no prop drilling, no Context re-renders.
 
 ---
 
-## Complete File Tree
+## File tree
 
 ```
-talk-to-a-folder/
-├── README.md
-├── .env.local.example
-├── .gitignore
-├── components.json
-├── next.config.ts
-├── package.json                     ← needs "geist" added to dependencies
-├── postcss.config.mjs
-├── tailwind.config.ts
-├── tsconfig.json
+src/
+├── app/
+│   ├── globals.css              dot grid, gradient text utilities
+│   ├── layout.tsx
+│   ├── page.tsx
+│   ├── providers.tsx
+│   └── api/
+│       ├── auth/[...nextauth]/route.ts
+│       ├── folders/
+│       │   ├── route.ts                 GET list, POST create
+│       │   └── [folderId]/
+│       │       ├── route.ts             GET, DELETE
+│       │       ├── ingest/route.ts      POST trigger
+│       │       ├── status/route.ts      GET progress
+│       │       └── files/route.ts       GET file list
+│       ├── chat/route.ts                POST SSE stream
+│       └── sessions/route.ts           GET recent sessions (history restore)
 │
-├── prisma/
-│   └── schema.prisma                ✅ complete
+├── components/
+│   ├── layout/
+│   │   ├── AppShell.tsx
+│   │   ├── TopBar.tsx
+│   │   ├── Sidebar.tsx
+│   │   ├── MainWorkspace.tsx
+│   │   └── IntroAnimation.tsx           curtain-lift on first load
+│   ├── chat/
+│   │   ├── ChatPanel.tsx
+│   │   ├── ChatComposer.tsx             floating, backdrop-blur
+│   │   ├── MessageList.tsx
+│   │   ├── UserMessage.tsx
+│   │   ├── AssistantAnswer.tsx
+│   │   ├── CitationBadge.tsx
+│   │   ├── EmptyChat.tsx                suggested questions with TiltCard
+│   │   └── AnswerMetadata.tsx
+│   ├── folders/
+│   │   ├── AddFolderModal.tsx
+│   │   ├── FolderCard.tsx               TiltCard 3D hover, inline delete confirm
+│   │   ├── FolderList.tsx
+│   │   ├── FolderStatusPill.tsx
+│   │   └── IngestionProgress.tsx
+│   ├── sources/
+│   │   ├── SourcesPanel.tsx
+│   │   ├── SourceTabs.tsx
+│   │   ├── SourceCard.tsx
+│   │   ├── FolderTree.tsx
+│   │   ├── DebugPanel.tsx
+│   │   └── ChunkCard.tsx
+│   └── ui/
+│       ├── TiltCard.tsx                 3D tilt + parallax (Framer Motion)
+│       ├── AnimatedBorder.tsx
+│       ├── LoadingDots.tsx
+│       └── [shadcn components]
 │
-└── src/
-    ├── app/
-    │   ├── globals.css              ✅ complete
-    │   ├── layout.tsx               ✅ complete
-    │   ├── page.tsx                 ✅ complete
-    │   ├── providers.tsx            ✅ complete
-    │   └── api/
-    │       ├── auth/[...nextauth]/
-    │       │   └── route.ts         ❌ MISSING — trivial (4 lines)
-    │       ├── folders/
-    │       │   ├── route.ts         ❌ MISSING — GET list + POST create
-    │       │   └── [folderId]/
-    │       │       ├── route.ts     ❌ MISSING — GET + DELETE
-    │       │       ├── ingest/
-    │       │       │   └── route.ts ❌ MISSING — POST trigger ingestion
-    │       │       ├── status/
-    │       │       │   └── route.ts ❌ MISSING — GET ingestion status
-    │       │       └── files/
-    │       │           └── route.ts ❌ MISSING — GET file list
-    │       └── chat/
-    │           └── route.ts         ❌ MISSING — POST with SSE streaming
-    │
-    ├── components/
-    │   ├── layout/
-    │   │   ├── AppShell.tsx         ✅ complete
-    │   │   ├── TopBar.tsx           ✅ complete
-    │   │   ├── Sidebar.tsx          ✅ complete
-    │   │   └── MainWorkspace.tsx    ✅ complete
-    │   ├── chat/
-    │   │   ├── ChatPanel.tsx        ✅ complete
-    │   │   ├── ChatComposer.tsx     ✅ complete
-    │   │   ├── MessageList.tsx      ✅ complete
-    │   │   ├── UserMessage.tsx      ✅ complete
-    │   │   ├── AssistantAnswer.tsx  ✅ complete
-    │   │   ├── CitationBadge.tsx    ✅ complete
-    │   │   ├── EmptyChat.tsx        ✅ complete
-    │   │   └── AnswerMetadata.tsx   ✅ complete
-    │   ├── folders/
-    │   │   ├── AddFolderModal.tsx   ✅ complete
-    │   │   ├── FolderCard.tsx       ✅ complete
-    │   │   ├── FolderList.tsx       ✅ complete
-    │   │   ├── FolderStatusPill.tsx ✅ complete
-    │   │   └── IngestionProgress.tsx✅ complete
-    │   ├── sources/
-    │   │   ├── SourcesPanel.tsx     ✅ complete
-    │   │   ├── SourceTabs.tsx       ✅ complete
-    │   │   ├── SourceCard.tsx       ✅ complete
-    │   │   ├── FolderTree.tsx       ✅ complete
-    │   │   ├── DebugPanel.tsx       ✅ complete
-    │   │   └── ChunkCard.tsx        ✅ complete
-    │   └── ui/
-    │       ├── button.tsx           ✅ complete
-    │       ├── card.tsx             ✅ complete
-    │       ├── badge.tsx            ✅ complete
-    │       ├── skeleton.tsx         ✅ complete
-    │       ├── tabs.tsx             ✅ complete
-    │       ├── scroll-area.tsx      ✅ complete
-    │       ├── tooltip.tsx          ✅ complete
-    │       ├── dialog.tsx           ✅ complete
-    │       ├── input.tsx            ✅ complete
-    │       ├── textarea.tsx         ✅ complete
-    │       ├── separator.tsx        ✅ complete
-    │       ├── progress.tsx         ✅ complete
-    │       ├── LoadingDots.tsx      ✅ complete
-    │       └── AnimatedBorder.tsx   ✅ complete
-    │
-    ├── hooks/
-    │   ├── useFolder.ts             ✅ complete
-    │   ├── useFolders.ts            ✅ complete
-    │   ├── useChat.ts               ✅ complete (mock streaming engine built in)
-    │   ├── useIngestion.ts          ✅ complete
-    │   └── useSourceHighlight.ts    ✅ complete
-    │
-    ├── lib/
-    │   ├── utils.ts                 ✅ complete
-    │   ├── auth.ts                  ✅ complete
-    │   ├── prisma.ts                ✅ complete
-    │   ├── mock-data.ts             ✅ complete (rich Q4 strategy mock folder + Q&A)
-    │   ├── google-drive.ts          ✅ complete
-    │   ├── chunker.ts               ✅ complete
-    │   ├── embeddings.ts            ✅ complete
-    │   ├── vector-store.ts          ✅ complete
-    │   ├── retrieval.ts             ✅ complete
-    │   ├── answer-generator.ts      ✅ complete
-    │   └── file-parsers/
-    │       ├── index.ts             ❌ MISSING — FileParser interface + registry
-    │       ├── google-doc.ts        ❌ MISSING — plain text passthrough
-    │       ├── google-sheet.ts      ❌ MISSING — CSV → readable text
-    │       ├── pdf.ts               ❌ MISSING — pdf-parse wrapper
-    │       └── plain-text.ts        ❌ MISSING — text/markdown/csv passthrough
-    │
-    ├── services/
-    │   ├── folder-service.ts        ❌ MISSING — CRUD + DB writes
-    │   ├── ingestion-service.ts     ❌ MISSING — full parse→chunk→embed→index pipeline
-    │   └── chat-service.ts          ❌ MISSING — retrieval + generation orchestration
-    │
-    ├── store/
-    │   ├── ui-store.ts              ✅ complete
-    │   └── chat-store.ts            ✅ complete
-    │
-    ├── types/
-    │   ├── index.ts                 ✅ complete
-    │   ├── folder.ts                ✅ complete
-    │   ├── chat.ts                  ✅ complete
-    │   ├── retrieval.ts             ✅ complete
-    │   └── api.ts                   ✅ complete
-    │
-    └── constants/
-        ├── index.ts                 ✅ complete
-        └── animations.ts            ✅ complete
+├── hooks/
+│   ├── useChat.ts                       SSE stream reader, sessionId persistence
+│   ├── useFolders.ts
+│   ├── useFolder.ts                     exposes refetch()
+│   ├── useIngestion.ts
+│   └── useSourceHighlight.ts
+│
+├── lib/
+│   ├── answer-generator.ts              GPT-4o, conversation history, confidence scoring
+│   ├── chunker.ts
+│   ├── embeddings.ts                    text-embedding-3-small
+│   ├── retrieval.ts                     cosine search + spread strategy
+│   ├── vector-store.ts                  Prisma SQLite backend
+│   ├── google-drive.ts                  recursive walk, subfolder support
+│   ├── google-auth.ts                   auto token refresh
+│   ├── auth.ts
+│   ├── prisma.ts
+│   ├── mock-data.ts
+│   └── file-parsers/
+│       ├── index.ts                     registry pattern
+│       ├── google-doc.ts
+│       ├── google-sheet.ts
+│       ├── pdf.ts
+│       ├── plain-text.ts
+│       ├── word.ts                      mammoth
+│       ├── excel.ts                     SheetJS
+│       └── powerpoint.ts               officeparser
+│
+├── services/
+│   ├── folder-service.ts               CRUD, DB writes
+│   ├── ingestion-service.ts            parse → chunk → embed → index pipeline
+│   └── chat-service.ts                 retrieval + generation, history injection
+│
+├── store/
+│   ├── ui-store.ts
+│   └── chat-store.ts
+│
+├── types/
+│   ├── index.ts
+│   ├── folder.ts
+│   ├── chat.ts
+│   ├── retrieval.ts
+│   └── api.ts
+│
+└── constants/
+    ├── index.ts                         limits, thresholds, model names
+    └── animations.ts                    shared Framer Motion variants
 ```
 
 ---
@@ -514,29 +426,22 @@ talk-to-a-folder/
 
 ### Prerequisites
 - Node.js 18+
-- Google Cloud project with Drive API + OAuth 2.0 credentials
+- Google Cloud project with Drive API enabled and OAuth 2.0 credentials (`drive.readonly` scope)
 - OpenAI API key
 
-### Install & Run
+### Install & run
 
 ```bash
 npm install
 cp .env.local.example .env.local
-# fill in credentials
+# fill in your credentials
 npx prisma db push
 npm run dev
 ```
 
-### Demo Mode (no API keys needed)
+Open `http://localhost:3000`.
 
-```bash
-# .env.local — set this one flag:
-NEXT_PUBLIC_MOCK_MODE=true
-```
-
-Full UI flow works without any credentials: ingestion simulation, streaming chat with citations, source inspection, debug panel.
-
-### Environment Variables
+### Environment variables
 
 ```
 NEXTAUTH_URL=http://localhost:3000
@@ -545,19 +450,58 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 OPENAI_API_KEY=
 DATABASE_URL=file:./dev.db
+NEXT_PUBLIC_MOCK_MODE=false
+```
+
+### Demo mode (no credentials needed)
+
+```bash
 NEXT_PUBLIC_MOCK_MODE=true
 ```
 
+Full UI flow runs without any API keys: simulated ingestion, word-by-word streaming, citation highlighting, debug panel.
+
+### Codex: tests
+
+Codex added a lightweight test suite using Node's built-in test runner. No Jest/Vitest dependency is required.
+
+```bash
+npm test
+npm run test:unit
+npm run test:functional
+npm run test:smoke
+npm run test:blackbox
+```
+
+Current verified status:
+
+```text
+npm test
+49 tests passed
+13 suites passed
+0 failed
+```
+
+Test categories:
+
+| Command | Coverage |
+|---------|----------|
+| `npm run test:unit` | Pure helpers, chunking, simple parser cleanup |
+| `npm run test:functional` | Chat API, folder API, ingestion service, retrieval, answer generator, chat service, parser dispatcher |
+| `npm run test:smoke` | Required file/API/service/parser structure and test scripts |
+| `npm run test:blackbox` | Public behavior of chat store and parser contracts |
+
 ---
 
-## Engineering Notes
+## Tech stack
 
-**Citation ↔ source sync**: `CitationBadge` sets `ui-store.highlightedCitationId` on `onHoverStart`. `SourceCard` reads the same atom and applies a glowing border. This is why Zustand was chosen over Context — zero re-renders outside the two subscribing components.
-
-**Vector store**: `PrismaVectorStore` stores embeddings as JSON strings in SQLite. Cosine similarity is computed in JS over the full result set. Acceptable for hundreds of chunks in dev. For production: implement `PineconeVectorStore` or use `pgvector` — the `VectorStore` interface in `lib/vector-store.ts` makes this a one-file swap.
-
-**Streaming**: `useChat.ts` reads SSE tokens and appends them to `streamedContent` on the assistant message. The `AssistantAnswer` component renders `streamedContent` while `isStreaming` is true, then switches to `content` when done. A blinking cursor animates during streaming.
-
-**Citation parsing**: The LLM is instructed to place `[N]` markers inline. `AssistantAnswer` splits the text on `\[(\d+)\]` and replaces each match with a `CitationBadge` component. The index maps to `citations[index - 1]`.
-
-**Mock mode**: `NEXT_PUBLIC_MOCK_MODE=true` makes every hook bypass the real API and use `src/lib/mock-data.ts`. The mock includes a full "Q4 2024 Product Strategy" folder with 5 realistic files, 4 suggested questions, and 3 detailed Q&A pairs with citations and debug info. Word-by-word streaming is simulated with a variable-delay timer in `useChat.ts`.
+| Layer | Choice |
+|-------|--------|
+| Framework | Next.js 14 App Router |
+| Auth | NextAuth v4 + Google OAuth |
+| Database | Prisma + SQLite (dev) |
+| Embeddings | OpenAI `text-embedding-3-small` |
+| LLM | OpenAI `gpt-4o` |
+| UI | Tailwind CSS + shadcn/ui + Framer Motion |
+| State | Zustand |
+| Icons | Lucide |
