@@ -1,5 +1,13 @@
 import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from '@/constants'
 
+// text-embedding-3-small has an 8192-token limit (~4 chars/token → ~32 768 chars).
+// We cap at 30 000 chars to leave headroom and avoid 400 errors on oversized inputs.
+const MAX_EMBED_CHARS = 30_000
+
+function safeTruncate(text: string): string {
+  return text.length > MAX_EMBED_CHARS ? text.slice(0, MAX_EMBED_CHARS) : text
+}
+
 /**
  * Clean interface for embedding providers.
  * Swap implementations by changing the exported `embeddings` singleton.
@@ -32,7 +40,7 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   async embed(text: string): Promise<number[]> {
     const res = await this.getClient().embeddings.create({
       model: this.modelName,
-      input: text.replace(/\n/g, ' '),
+      input: safeTruncate(text).replace(/\n/g, ' '),
     })
     return res.data[0].embedding
   }
@@ -45,7 +53,7 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
     const results: number[][] = []
 
     for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-      const batch = texts.slice(i, i + BATCH_SIZE).map((t) => t.replace(/\n/g, ' '))
+      const batch = texts.slice(i, i + BATCH_SIZE).map((t) => safeTruncate(t).replace(/\n/g, ' '))
       const res = await this.getClient().embeddings.create({
         model: this.modelName,
         input: batch,

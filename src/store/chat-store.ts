@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import { nanoid } from 'nanoid'
-import type { ChatMessage, Citation, ChatTab } from '@/types'
+import type { ChatMessage, Citation, ChatTab, QuotedContext } from '@/types'
 
 interface HistorySession {
   id: string
@@ -34,6 +34,9 @@ interface ChatStore {
   // Per-tab folder management
   addFolderToTab: (tabId: string, folderId: string) => void
   removeFolderFromTab: (tabId: string, folderId: string) => void
+
+  // Quoted text (from document viewer text selection)
+  setTabQuotedText: (tabId: string, ctx: QuotedContext | null) => void
 }
 
 function updateTab(
@@ -57,6 +60,7 @@ export const useChatStore = create<ChatStore>((set) => ({
       messages: [],
       isStreaming: false,
       currentCitations: [],
+      quotedText: null,
     }
     set((s) => ({ tabs: [...s.tabs, newTab], activeTabId: id }))
     return id
@@ -89,6 +93,7 @@ export const useChatStore = create<ChatStore>((set) => ({
           messages: session.messages,
           isStreaming: false,
           currentCitations: lastAssistant?.citations ?? [],
+          quotedText: null,
         }
       })
 
@@ -143,4 +148,10 @@ export const useChatStore = create<ChatStore>((set) => ({
           : { ...t, folderIds: t.folderIds.filter((id) => id !== folderId) },
       ),
     })),
-}))
+
+  setTabQuotedText: (tabId, ctx) =>
+    set((s) => ({
+      tabs: updateTab(s.tabs, tabId, (t) => ({ ...t, quotedText: ctx })),
+    })),
+})
+)

@@ -50,6 +50,19 @@ export function chunkText(
     }
   }
 
+  // Hard-split any segment that is still larger than chunkSize
+  // (happens when a single sentence / table row exceeds the limit — e.g. wide Excel rows)
+  const finalSegments: string[] = []
+  for (const seg of rawSegments) {
+    if (seg.length <= chunkSize) {
+      finalSegments.push(seg)
+    } else {
+      for (let i = 0; i < seg.length; i += chunkSize) {
+        finalSegments.push(seg.slice(i, i + chunkSize))
+      }
+    }
+  }
+
   // Merge small adjacent segments and apply overlap
   const chunks: TextChunk[] = []
   let buffer = ''
@@ -57,7 +70,7 @@ export function chunkText(
   let charPos = 0
   let chunkIndex = 0
 
-  for (const segment of rawSegments) {
+  for (const segment of finalSegments) {
     const candidate = buffer ? buffer + '\n\n' + segment : segment
 
     if (candidate.length > chunkSize && buffer) {

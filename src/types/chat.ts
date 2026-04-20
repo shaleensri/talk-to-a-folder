@@ -38,6 +38,11 @@ export interface SuggestedQuestion {
   text: string
 }
 
+export interface QuotedContext {
+  text: string    // the selected text shown in the composer block
+  fileId: string  // DriveFile.id — used to pin retrieval to this file
+}
+
 export interface ChatTab {
   id: string
   sessionId: string | null
@@ -45,4 +50,5 @@ export interface ChatTab {
   messages: ChatMessage[]
   isStreaming: boolean
   currentCitations: Citation[]
+  quotedText: QuotedContext | null // text selected in document viewer, prepended to next message
 }

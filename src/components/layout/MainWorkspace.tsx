@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useUIStore } from '@/store/ui-store'
 import { useChatStore } from '@/store/chat-store'
 import { FileTreePanel } from '@/components/layout/FileTreePanel'
@@ -14,6 +14,8 @@ const LEFT_MIN = 180
 const LEFT_MAX = 360
 const RIGHT_MIN = 300
 const RIGHT_MAX = 520
+// Center panel must always have at least this many px so the right panel can't push off-screen
+const CENTER_MIN = 200
 
 interface MainWorkspaceProps {
   allFolders: IndexedFolder[]
@@ -22,16 +24,61 @@ interface MainWorkspaceProps {
   onDelete: (folder: IndexedFolder) => void
 }
 
-function DragHandle({
-  onDragStart,
-  isDragging,
-}: {
-  onDragStart: (e: React.MouseEvent) => void
+// ---------------------------------------------------------------------------
+// DragHandle — uses pointer capture so pointerup always fires on this element,
+// even when the cursor leaves the browser window mid-drag. This is the only
+// approach that reliably ends the drag when the mouse button is released.
+// ---------------------------------------------------------------------------
+interface DragHandleProps {
+  /** Panel width at the start of the current drag — captured once in onPointerDown */
+  captureWidth: () => number
+  /** Called on every pointermove with the new computed width */
+  onWidthChange: (w: number) => void
+  /** +1 = left handle (drag right → wider), -1 = right handle (drag left → wider) */
+  sign: 1 | -1
+  min: number
+  max: number
   isDragging: boolean
-}) {
+  setIsDragging: (v: boolean) => void
+}
+
+function DragHandle({
+  captureWidth,
+  onWidthChange,
+  sign,
+  min,
+  max,
+  isDragging,
+  setIsDragging,
+}: DragHandleProps) {
+  const startRef = useRef<{ x: number; width: number } | null>(null)
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    startRef.current = { x: e.clientX, width: captureWidth() }
+    setIsDragging(true)
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!startRef.current) return
+    const delta = (e.clientX - startRef.current.x) * sign
+    onWidthChange(Math.max(min, Math.min(max, startRef.current.width + delta)))
+  }
+
+  function onPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (!startRef.current) return
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    startRef.current = null
+    setIsDragging(false)
+  }
+
   return (
     <div
-      onMouseDown={onDragStart}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
       className={cn(
         'w-[5px] flex-shrink-0 flex items-center justify-center cursor-col-resize group relative z-10',
         'border-l border-white/[0.06] hover:border-indigo-500/40 transition-colors',
@@ -57,49 +104,16 @@ export function MainWorkspace({ allFolders, folderFiles, onReindex, onDelete }: 
   const [isDraggingLeft, setIsDraggingLeft] = useState(false)
   const [isDraggingRight, setIsDraggingRight] = useState(false)
 
-  // Refs hold drag state so event handlers added once via useEffect
-  // always read current values — no stale closures, no listener stacking.
-  const leftDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
-  const rightDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  // Stable refs so DragHandle callbacks always read current store values
+  // without needing to be recreated on every render.
+  const leftWidthRef = useRef(leftPanelWidth)
+  leftWidthRef.current = leftPanelWidth
 
-  useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => {
-      if (leftDragRef.current) {
-        const { startX, startWidth } = leftDragRef.current
-        setLeftPanelWidth(Math.max(LEFT_MIN, Math.min(LEFT_MAX, startWidth + (e.clientX - startX))))
-      }
-      if (rightDragRef.current) {
-        const { startX, startWidth } = rightDragRef.current
-        setRightPanelWidth(Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, startWidth - (e.clientX - startX))))
-      }
-    }
-    const onMouseUp = () => {
-      if (leftDragRef.current) { leftDragRef.current = null; setIsDraggingLeft(false) }
-      if (rightDragRef.current) { rightDragRef.current = null; setIsDraggingRight(false) }
-    }
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
-    return () => {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
-    }
-  }, [setLeftPanelWidth, setRightPanelWidth])
-
-  const handleLeftDragStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    leftDragRef.current = { startX: e.clientX, startWidth: leftPanelWidth }
-    setIsDraggingLeft(true)
-  }, [leftPanelWidth])
-
-  const handleRightDragStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    rightDragRef.current = { startX: e.clientX, startWidth: rightPanelWidth }
-    setIsDraggingRight(true)
-  }, [rightPanelWidth])
+  const rightWidthRef = useRef(rightPanelWidth)
+  rightWidthRef.current = rightPanelWidth
 
   const isDragging = isDraggingLeft || isDraggingRight
 
-  // Resolve which file is open and which folder it belongs to
   const openFile = openFileId
     ? folderFiles.flatMap((ff) => ff.files).find((f) => f.id === openFileId) ?? null
     : null
@@ -117,15 +131,35 @@ export function MainWorkspace({ allFolders, folderFiles, onReindex, onDelete }: 
       </div>
 
       {/* Left drag handle */}
-      <DragHandle onDragStart={handleLeftDragStart} isDragging={isDraggingLeft} />
+      <DragHandle
+        captureWidth={() => leftWidthRef.current}
+        onWidthChange={setLeftPanelWidth}
+        sign={1}
+        min={LEFT_MIN}
+        max={LEFT_MAX}
+        isDragging={isDraggingLeft}
+        setIsDragging={setIsDraggingLeft}
+      />
 
       {/* Center panel — document viewer */}
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden border-r border-white/[0.06]">
-        <DocumentViewer file={openFile} />
+        <DocumentViewer file={openFile} allFolders={allFolders} />
       </div>
 
       {/* Right drag handle */}
-      <DragHandle onDragStart={handleRightDragStart} isDragging={isDraggingRight} />
+      <DragHandle
+        captureWidth={() => rightWidthRef.current}
+        onWidthChange={(w) => {
+          // Cap so the center panel always has CENTER_MIN px of space
+          const available = window.innerWidth - leftWidthRef.current - 10
+          setRightPanelWidth(Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, Math.min(available - CENTER_MIN, w))))
+        }}
+        sign={-1}
+        min={RIGHT_MIN}
+        max={RIGHT_MAX}
+        isDragging={isDraggingRight}
+        setIsDragging={setIsDraggingRight}
+      />
 
       {/* Right panel — chat */}
       <div style={{ width: rightPanelWidth }} className="flex-shrink-0 overflow-hidden">

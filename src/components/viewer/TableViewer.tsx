@@ -7,12 +7,17 @@ interface TableViewerProps {
   rows: string[][]
   sheets?: string[]
   activeSheet?: string
+  sheetsData?: Record<string, string[][]>
 }
 
-export function TableViewer({ rows, sheets, activeSheet }: TableViewerProps) {
+export function TableViewer({ rows, sheets, activeSheet, sheetsData }: TableViewerProps) {
   const [searchQuery, setSearchQuery] = useState('')
+  const [currentSheet, setCurrentSheet] = useState(activeSheet)
 
-  if (rows.length === 0) {
+  // When sheetsData is available, switch rows based on the selected tab
+  const currentRows = (sheetsData && currentSheet && sheetsData[currentSheet]) ? sheetsData[currentSheet] : rows
+
+  if (currentRows.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-xs text-zinc-600">
         No data found in this file
@@ -20,8 +25,8 @@ export function TableViewer({ rows, sheets, activeSheet }: TableViewerProps) {
     )
   }
 
-  const headers = rows[0]
-  const dataRows = rows.slice(1)
+  const headers = currentRows[0]
+  const dataRows = currentRows.slice(1)
 
   const filtered = searchQuery.trim()
     ? dataRows.filter((row) =>
@@ -37,17 +42,18 @@ export function TableViewer({ rows, sheets, activeSheet }: TableViewerProps) {
         {sheets && sheets.length > 1 && (
           <div className="flex items-center gap-1">
             {sheets.map((sheet) => (
-              <span
+              <button
                 key={sheet}
+                onClick={() => { setCurrentSheet(sheet); setSearchQuery('') }}
                 className={cn(
                   'text-[11px] px-2 py-0.5 rounded border transition-colors',
-                  sheet === activeSheet
+                  sheet === currentSheet
                     ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300'
-                    : 'border-zinc-800 text-zinc-500',
+                    : 'border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300',
                 )}
               >
                 {sheet}
-              </span>
+              </button>
             ))}
           </div>
         )}

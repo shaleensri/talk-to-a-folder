@@ -181,7 +181,7 @@ function FolderPills({ activeTab, activeFolders, addableFolders }: FolderPillsPr
 export function ChatPanel({ activeTab, allFolders }: ChatPanelProps) {
   const { messages, isStreaming, sendMessage, stopStreaming } = useChat(activeTab?.id ?? null)
   const [newChatOpen, setNewChatOpen] = useState(false)
-  const { addTab } = useChatStore()
+  const { addTab, setTabQuotedText } = useChatStore()
 
   const activeFolders = (activeTab?.folderIds ?? [])
     .map((id) => allFolders.find((f) => f.id === id))
@@ -195,9 +195,9 @@ export function ChatPanel({ activeTab, allFolders }: ChatPanelProps) {
     activeFolders.length > 0 &&
     activeFolders.every((f) => f.status === 'indexed')
 
-  function handleSend(text: string) {
+  function handleSend(text: string, sourceFileId?: string) {
     if (!activeTab || !canChat) return
-    sendMessage(text)
+    sendMessage(text, sourceFileId)
   }
 
   function handleNewChat(folderIds: string[]) {
@@ -254,11 +254,13 @@ export function ChatPanel({ activeTab, allFolders }: ChatPanelProps) {
       {/* ── Composer ── */}
       <div className="relative z-20 flex-shrink-0">
         <ChatComposer
-          onSend={handleSend}
+          onSend={(text, fileId) => handleSend(text, fileId)}
           onStop={stopStreaming}
           isLoading={isStreaming}
           disabled={!canChat}
           placeholder={placeholder}
+          quotedText={activeTab?.quotedText}
+          onClearQuote={activeTab ? () => setTabQuotedText(activeTab.id, null) : undefined}
         />
       </div>
 

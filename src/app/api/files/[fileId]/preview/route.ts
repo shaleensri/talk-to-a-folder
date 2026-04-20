@@ -79,18 +79,22 @@ export async function GET(_req: NextRequest, { params }: Params) {
       case 'application/vnd.ms-excel': {
         const buffer = await downloadFile(file.driveFileId, accessToken)
         const workbook = XLSX.read(buffer, { type: 'buffer' })
-        // Return the first sheet as a table; include sheet name if multiple sheets
-        const sheetName = workbook.SheetNames[0]
-        const sheet = workbook.Sheets[sheetName]
-        const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
-        const cleanRows = rows
-          .map((row) => row.map(String))
-          .filter((row) => row.some((cell) => cell.trim() !== ''))
+        // Parse every sheet and return all data so the viewer can switch tabs client-side
+        const sheetsData: Record<string, string[][]> = {}
+        for (const name of workbook.SheetNames) {
+          const sheet = workbook.Sheets[name]
+          const raw: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
+          sheetsData[name] = raw
+            .map((row) => row.map(String))
+            .filter((row) => row.some((cell) => cell.trim() !== ''))
+        }
+        const activeSheet = workbook.SheetNames[0]
         return NextResponse.json({
           type: 'table',
-          rows: cleanRows,
+          rows: sheetsData[activeSheet] ?? [],
+          sheetsData,
           sheets: workbook.SheetNames,
-          activeSheet: sheetName,
+          activeSheet,
         })
       }
 
@@ -104,7 +108,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': {
         const buffer = await downloadFile(file.driveFileId, accessToken)
         const result = await mammoth.convertToHtml({ buffer })
-        return NextResponse.json({ type: 'html', content: result.value })
+        return NextResponse.json({ type: 'html', content: sanitizeHtml(result.value) })
       }
 
       // ── PDF → delegate to raw stream route ──────────────────────────────
@@ -145,6 +149,18 @@ async function exportGoogleFileAsHtml(
   // Fall back to plain text via existing exportGoogleFile helper
   const plainText = await exportGoogleFile(driveFileId, 'application/vnd.google-apps.document', accessToken)
   return `<pre style="white-space:pre-wrap">${escapeHtml(plainText)}</pre>`
+}
+
+/**
+ * Strips inline color/background styles from HTML so our CSS controls all colors.
+ * Preserves other style properties (font-size, margin, padding etc).
+ * Fixes invisible text from Word documents that use white or light inline colors.
+ */
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/\s*color\s*:[^;"}]+;?/gi, '')
+    .replace(/\s*background(-color)?\s*:[^;"}]+;?/gi, '')
+    .replace(/\s*style="\s*"/gi, '') // remove empty style attrs left behind
 }
 
 function escapeHtml(text: string): string {

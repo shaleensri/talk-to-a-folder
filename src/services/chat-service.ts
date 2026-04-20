@@ -126,11 +126,24 @@ export async function saveAssistantMessage(
 
 const HISTORY_TURNS = 6 // last 6 messages = 3 user+assistant turns
 
+/**
+ * Extracts the quoted text from a message formatted as:
+ *   "> quoted selection\n\nuser question"
+ * Returns null if the message doesn't contain a blockquote.
+ */
+function extractQuoteText(message: string): string | null {
+  if (!message.startsWith('> ')) return null
+  const boundary = message.indexOf('\n\n')
+  if (boundary === -1) return null
+  return message.slice(2, boundary).trim() // skip leading "> "
+}
+
 export async function chat(
   folderIds: string[],
   query: string,
   sessionId: string,
   streamCallback?: (token: string) => void,
+  sourceFileId?: string,
 ): Promise<ChatResponse> {
   // Load recent conversation history for context
   const recentMessages = await prisma.chatMessage.findMany({
@@ -154,10 +167,16 @@ export async function chat(
           : m.content,
     }))
 
-  // Rewrite vague follow-up queries into self-contained ones before retrieval
-  const effectiveQuery = await rewriteQueryIfNeeded(query, history)
+  // When the user sent a quote from a specific file, use the quoted text itself
+  // as the retrieval query — not their (often short/vague) question.
+  // "What's this?" embeds with no signal; the quoted passage embeds with rich signal
+  // and finds the chunks adjacent to what the user is actually looking at.
+  // Skip query rewriting too — the quote is already self-contained context.
+  const retrievalQuery = sourceFileId
+    ? (extractQuoteText(query) ?? query)
+    : await rewriteQueryIfNeeded(query, history)
 
-  const retrieval = await retrieve(effectiveQuery, folderIds, history)
+  const retrieval = await retrieve(retrievalQuery, folderIds, history, sourceFileId)
 
   // Build folder name map for multi-folder labeling
   const folderRecords = await prisma.indexedFolder.findMany({
@@ -166,10 +185,9 @@ export async function chat(
   })
   const folderNames = new Map(folderRecords.map((f) => [f.id, f.name]))
 
-  // Answer uses the effective (possibly rewritten) query for retrieval context,
-  // but the original query is what the user sees — so pass effectiveQuery to the
-  // LLM so it knows what was actually being asked.
-  const generated = await generateAnswer(effectiveQuery, retrieval, history, streamCallback, folderNames)
+  // The answer generator always receives the original query so the model sees
+  // the full message (blockquote + question) and knows what the user asked.
+  const generated = await generateAnswer(query, retrieval, history, streamCallback, folderNames)
 
   const response: ChatResponse = {
     messageId: generateId(),

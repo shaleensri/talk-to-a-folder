@@ -12,7 +12,7 @@ const IS_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 interface UseChatResult {
   messages: ChatMessage[]
   isStreaming: boolean
-  sendMessage: (content: string) => Promise<void>
+  sendMessage: (content: string, sourceFileId?: string) => Promise<void>
   stopStreaming: () => void
 }
 
@@ -44,7 +44,7 @@ export function useChat(tabId: string | null): UseChatResult {
   const activeTab = tabs.find((t) => t.id === tabId) ?? null
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, sourceFileId?: string) => {
       if (!tabId || !activeTab || activeTab.isStreaming) return
 
       const { folderIds, sessionId } = activeTab
@@ -95,7 +95,7 @@ export function useChat(tabId: string | null): UseChatResult {
           const res = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ folderIds, message: content, sessionId }),
+            body: JSON.stringify({ folderIds, message: content, sessionId, sourceFileId }),
             signal: abortRef.current.signal,
           })
 

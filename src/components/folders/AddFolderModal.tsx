@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import { FolderOpen, Link, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { FolderOpen, Search, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Dialog,
@@ -12,18 +12,19 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { IngestionProgress } from './IngestionProgress'
 import { useUIStore } from '@/store/ui-store'
 import { useChatStore } from '@/store/chat-store'
-import { extractFolderIdFromUrl } from '@/lib/utils'
 import { MOCK_FOLDERS, MOCK_INGESTION_STEPS, MOCK_FILES } from '@/lib/mock-data'
 import { scaleIn } from '@/constants/animations'
+import { cn } from '@/lib/utils'
 import type { IngestionProgress as IngestionProgressType, DriveFile } from '@/types'
 
 const IS_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 
 type ModalStep = 'input' | 'validating' | 'ingesting' | 'done' | 'error'
+
+interface DriveFolder { id: string; name: string }
 
 interface AddFolderModalProps {
   onFolderAdded?: () => void
@@ -33,70 +34,84 @@ export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
   const { addFolderModalOpen, setAddFolderModalOpen } = useUIStore()
   const { addTab } = useChatStore()
 
-  const [url, setUrl] = useState('')
   const [step, setStep] = useState<ModalStep>('input')
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState<IngestionProgressType | null>(null)
   const [progressFiles, setProgressFiles] = useState<DriveFile[]>([])
 
+  // Drive folder picker state
+  const [driveFolders, setDriveFolders] = useState<DriveFolder[]>([])
+  const [foldersLoading, setFoldersLoading] = useState(false)
+  const [foldersError, setFoldersError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState<DriveFolder | null>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  // Fetch Drive folders when modal opens
+  useEffect(() => {
+    if (!addFolderModalOpen || IS_MOCK) return
+    setFoldersLoading(true)
+    setFoldersError(null)
+    fetch('/api/drive/folders')
+      .then(async (res) => {
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? 'Failed to load folders')
+        setDriveFolders(data.folders)
+      })
+      .catch((err) => {
+        setFoldersError(err.message ?? 'Could not load your Drive folders')
+      })
+      .finally(() => setFoldersLoading(false))
+  }, [addFolderModalOpen])
+
+  // Focus search when folders load
+  useEffect(() => {
+    if (!foldersLoading && driveFolders.length > 0) {
+      setTimeout(() => searchRef.current?.focus(), 50)
+    }
+  }, [foldersLoading, driveFolders.length])
+
   function reset() {
-    setUrl('')
     setStep('input')
     setError(null)
     setProgress(null)
     setProgressFiles([])
+    setSearch('')
+    setSelected(null)
+    setDriveFolders([])
+    setFoldersError(null)
   }
 
   function handleClose() {
-    if (step === 'ingesting') return // don't close while indexing
+    if (step === 'ingesting') return
     setAddFolderModalOpen(false)
-    setTimeout(reset, 300) // wait for dialog close animation
+    setTimeout(reset, 300)
   }
 
   const handleSubmit = useCallback(async () => {
-    const folderId = extractFolderIdFromUrl(url.trim())
-    if (!folderId && !IS_MOCK) {
-      setError('Invalid Google Drive folder URL. Make sure to copy the full link.')
-      return
-    }
+    if (!selected && !IS_MOCK) return
 
     setError(null)
     setStep('validating')
 
     if (IS_MOCK) {
-      // Simulate ingestion with staged steps
       await new Promise((r) => setTimeout(r, 800))
       setStep('ingesting')
-
       for (let i = 0; i < MOCK_INGESTION_STEPS.length; i++) {
-        const step = MOCK_INGESTION_STEPS[i]
-        setProgress(step)
-
-        // Build file list as steps progress
+        const s = MOCK_INGESTION_STEPS[i]
+        setProgress(s)
         const mockFiles = MOCK_FILES['mock-folder-q4-strategy']
-        const parsed = step.progress.parsed
         setProgressFiles(
-          mockFiles.slice(0, parsed).map((f, idx) => ({
+          mockFiles.slice(0, s.progress.parsed).map((f, idx) => ({
             ...f,
-            status: idx < step.progress.indexed ? 'indexed' : 'parsing',
+            status: idx < s.progress.indexed ? 'indexed' : 'parsing',
           }))
         )
-
         await new Promise((r) => setTimeout(r, i === 0 ? 600 : 900))
       }
-
-      // Final state
-      const newFolder = {
-        ...MOCK_FOLDERS[0],
-        id: `mock-folder-${Date.now()}`,
-        name: 'New Indexed Folder',
-        driveUrl: url || MOCK_FOLDERS[0].driveUrl,
-        status: 'indexed' as const,
-      }
-
       setStep('done')
       setTimeout(() => {
-        addTab([MOCK_FOLDERS[0].id]) // open a chat tab for the new folder
+        addTab([MOCK_FOLDERS[0].id])
         onFolderAdded?.()
         setAddFolderModalOpen(false)
         setTimeout(reset, 300)
@@ -104,12 +119,11 @@ export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
       return
     }
 
-    // Real mode: call API
     try {
       const res = await fetch('/api/folders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ driveUrl: url.trim() }),
+        body: JSON.stringify({ driveFolderId: selected!.id }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Failed to create folder')
@@ -117,10 +131,8 @@ export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
       const folder = data.folder
       setStep('ingesting')
 
-      // Start ingestion
       await fetch(`/api/folders/${folder.id}/ingest`, { method: 'POST' })
 
-      // Poll for status
       const poll = async () => {
         const statusRes = await fetch(`/api/folders/${folder.id}/status`)
         const statusData = await statusRes.json()
@@ -129,7 +141,7 @@ export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
         if (statusData.status.status === 'indexed') {
           setStep('done')
           setTimeout(() => {
-            addTab([folder.id]) // open a chat tab for the new folder
+            addTab([folder.id])
             onFolderAdded?.()
             setAddFolderModalOpen(false)
             setTimeout(reset, 300)
@@ -146,9 +158,11 @@ export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
       setStep('error')
       setError(err instanceof Error ? err.message : 'Something went wrong')
     }
-  }, [url, addTab, setAddFolderModalOpen])
+  }, [selected, addTab, setAddFolderModalOpen, onFolderAdded])
 
-  const isValidUrl = IS_MOCK || !!extractFolderIdFromUrl(url.trim())
+  const filtered = search.trim()
+    ? driveFolders.filter((f) => f.name.toLowerCase().includes(search.toLowerCase()))
+    : driveFolders
 
   return (
     <Dialog open={addFolderModalOpen} onOpenChange={handleClose}>
@@ -161,8 +175,8 @@ export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
             <DialogTitle>Index a folder</DialogTitle>
           </div>
           <DialogDescription>
-            Paste a Google Drive folder link. We'll parse and index all supported
-            files so you can ask questions about them.
+            Choose a folder from your Google Drive. We'll parse and index all
+            supported files so you can ask questions about them.
           </DialogDescription>
         </DialogHeader>
 
@@ -174,40 +188,79 @@ export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
               initial="hidden"
               animate="visible"
               exit="exit"
-              className="space-y-3"
+              className="space-y-2"
             >
+              {/* Search box */}
               <div className="relative">
-                <Link className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
-                <Input
-                  placeholder="https://drive.google.com/drive/folders/…"
-                  value={url}
-                  onChange={(e) => {
-                    setUrl(e.target.value)
-                    setError(null)
-                  }}
-                  className="pl-9"
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && isValidUrl) handleSubmit()
-                  }}
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
+                <input
+                  ref={searchRef}
+                  type="text"
+                  placeholder="Search folders…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 h-9 rounded-md border border-zinc-800 bg-zinc-900 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-indigo-500/50 focus:outline-none transition-colors"
                 />
+              </div>
+
+              {/* Folder list */}
+              <div className="h-56 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950">
+                {foldersLoading && (
+                  <div className="flex items-center justify-center h-full gap-2 text-zinc-600">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-xs">Loading your Drive folders…</span>
+                  </div>
+                )}
+
+                {!foldersLoading && foldersError && (
+                  <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-4">
+                    <AlertCircle className="w-4 h-4 text-red-400/70" />
+                    <p className="text-xs text-zinc-500">{foldersError}</p>
+                  </div>
+                )}
+
+                {!foldersLoading && !foldersError && filtered.length === 0 && (
+                  <div className="flex items-center justify-center h-full">
+                    <p className="text-xs text-zinc-600">
+                      {search ? 'No folders match your search' : 'No folders found in your Drive'}
+                    </p>
+                  </div>
+                )}
+
+                {!foldersLoading && !foldersError && filtered.map((folder) => {
+                  const isSelected = selected?.id === folder.id
+                  return (
+                    <button
+                      key={folder.id}
+                      onClick={() => setSelected(isSelected ? null : folder)}
+                      className={cn(
+                        'flex items-center gap-2.5 w-full px-3 py-2 text-left text-sm transition-colors',
+                        isSelected
+                          ? 'bg-indigo-500/10 text-indigo-200'
+                          : 'text-zinc-300 hover:bg-zinc-800/60',
+                      )}
+                    >
+                      <FolderOpen className={cn('w-3.5 h-3.5 flex-shrink-0', isSelected ? 'text-indigo-400' : 'text-zinc-500')} />
+                      <span className="truncate">{folder.name}</span>
+                    </button>
+                  )
+                })}
               </div>
 
               {error && (
                 <motion.div
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="flex items-center gap-2 text-sm text-red-400"
+                  className="flex items-center gap-2 text-xs text-red-400"
                 >
-                  <AlertCircle className="w-3.5 h-3.5" />
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
                   {error}
                 </motion.div>
               )}
 
-              <div className="text-xs text-zinc-600 space-y-0.5">
-                <p>Supported: Google Docs, Sheets, PDFs, plain text, Markdown</p>
-                <p>Requires: folder must be shared with your Google account</p>
-              </div>
+              <p className="text-xs text-zinc-600">
+                Supported: Google Docs, Sheets, PDFs, plain text, Markdown, Excel
+              </p>
             </motion.div>
           )}
 
@@ -232,7 +285,7 @@ export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
               </Button>
               <Button
                 onClick={handleSubmit}
-                disabled={(!IS_MOCK && !isValidUrl) || step === 'validating'}
+                disabled={(!IS_MOCK && !selected) || step === 'validating'}
                 size="sm"
                 className="gap-1.5"
               >
@@ -241,8 +294,10 @@ export function AddFolderModal({ onFolderAdded }: AddFolderModalProps) {
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     Validating…
                   </>
+                ) : selected ? (
+                  `Index "${selected.name}"`
                 ) : (
-                  'Index folder'
+                  'Select a folder'
                 )}
               </Button>
             </>

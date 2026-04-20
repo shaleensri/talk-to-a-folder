@@ -255,9 +255,17 @@ export async function retrieve(
   query: string,
   folderIds: string[],
   history: { role: 'user' | 'assistant'; content: string }[] = [],
+  sourceFileId?: string,
 ): Promise<RetrievalResult> {
   const startMs = Date.now()
   const isMultiFolder = folderIds.length > 1
+
+  // If the user sent a quoted selection from a specific file, skip intent classification
+  // and pin retrieval to that file. This prevents the model from answering about a
+  // different document than the one the user is looking at.
+  if (sourceFileId) {
+    return retrieveSingleFile(query, sourceFileId, folderIds, startMs, undefined, true)
+  }
 
   // Rewrite follow-up queries and classify intent in parallel
   const [rewrittenQuery, { intent, targetFileName }] = await Promise.all([
@@ -357,6 +365,7 @@ async function retrieveSingleFile(
   folderIds: string[],
   startMs: number,
   matchedFileName?: string,
+  suppressAssumption = false,
 ): Promise<RetrievalResult> {
   // Query by cosine similarity scoped to this file, capped at MAX_SINGLE_FILE_CHUNKS.
   // queryFile handles embedding, scoring, and sorting — results come back sorted by score.
@@ -393,11 +402,14 @@ async function retrieveSingleFile(
     totalLatencyMs: 0,
   }
 
-  // Use the actual file name from the first chunk (more accurate than the classifier's extraction)
+  // Use the actual file name from the first chunk (more accurate than the classifier's extraction).
+  // Skip the assumption note when the file was pinned via a quote selection — the user
+  // knows exactly which document they're referencing.
   const resolvedName = selectedChunks[0]?.fileName ?? matchedFileName
-  const assumption = resolvedName
-    ? `Interpreting this as a question about **${resolvedName}**. If you meant something else, try rephrasing with the exact file name.`
-    : undefined
+  const assumption =
+    !suppressAssumption && resolvedName
+      ? `Interpreting this as a question about **${resolvedName}**. If you meant something else, try rephrasing with the exact file name.`
+      : undefined
 
   return {
     selectedChunks,
