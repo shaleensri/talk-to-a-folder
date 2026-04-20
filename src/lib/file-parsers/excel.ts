@@ -15,7 +15,8 @@ export function parseExcel(
     const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
 
     if (rows.length === 0) continue
-    lines.push(`Sheet: ${sheetName}`)
+    // Double newline after sheet header so chunker treats each sheet as a new paragraph group
+    lines.push(`Sheet: ${sheetName}\n`)
 
     const headers = rows[0].map(String)
     for (let i = 1; i < rows.length; i++) {
@@ -25,10 +26,11 @@ export function parseExcel(
       const pairs = headers
         .map((h, j) => `${h}: ${String(row[j] ?? '').trim()}`)
         .filter((p) => !p.endsWith(': '))
-      if (pairs.length > 0) lines.push(pairs.join(' | '))
+      // Each row gets its own paragraph (blank line after) so the chunker
+      // can group adjacent rows into chunks rather than treating the whole
+      // sheet as one unsplittable block.
+      if (pairs.length > 0) lines.push(pairs.join(' | ') + '\n')
     }
-
-    lines.push('')
   }
 
   return {

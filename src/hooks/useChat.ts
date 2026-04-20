@@ -3,7 +3,6 @@
 import { useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 import { useChatStore } from '@/store/chat-store'
-import { useUIStore } from '@/store/ui-store'
 import { getMockResponse } from '@/lib/mock-data'
 import { generateId } from '@/lib/utils'
 import type { ChatMessage } from '@/types'
@@ -13,7 +12,7 @@ const IS_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 interface UseChatResult {
   messages: ChatMessage[]
   isStreaming: boolean
-  sendMessage: (content: string) => Promise<void>
+  sendMessage: (content: string, sourceFileId?: string) => Promise<void>
   stopStreaming: () => void
 }
 
@@ -40,13 +39,12 @@ export function useChat(tabId: string | null): UseChatResult {
     setTabStreaming,
     setTabCitations,
   } = useChatStore()
-  const { setRightPanelTab } = useUIStore()
   const abortRef = useRef<AbortController | null>(null)
 
   const activeTab = tabs.find((t) => t.id === tabId) ?? null
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, sourceFileId?: string) => {
       if (!tabId || !activeTab || activeTab.isStreaming) return
 
       const { folderIds, sessionId } = activeTab
@@ -90,7 +88,6 @@ export function useChat(tabId: string | null): UseChatResult {
             debugInfo: mockResponse.debugInfo,
           })
           setTabCitations(tabId, mockResponse.citations)
-          if (mockResponse.citations.length > 0) setRightPanelTab('sources')
         } else {
           // Real API: SSE streaming
           abortRef.current = new AbortController()
@@ -98,7 +95,7 @@ export function useChat(tabId: string | null): UseChatResult {
           const res = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ folderIds, message: content, sessionId }),
+            body: JSON.stringify({ folderIds, message: content, sessionId, sourceFileId }),
             signal: abortRef.current.signal,
           })
 
@@ -163,7 +160,6 @@ export function useChat(tabId: string | null): UseChatResult {
 
           if (finalCitations && finalCitations.length > 0) {
             setTabCitations(tabId, finalCitations)
-            setRightPanelTab('sources')
           }
         }
       } catch (err) {

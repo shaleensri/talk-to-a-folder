@@ -7,13 +7,15 @@ import type { RetrievalDebugInfo } from './retrieval'
 // ---------------------------------------------------------------------------
 
 export interface CreateFolderRequest {
-  driveUrl: string
+  driveUrl?: string
+  driveFolderId?: string
 }
 
 export interface ChatRequest {
   folderIds: string[]
   message: string
   sessionId?: string
+  sourceFileId?: string  // set when message contains a quote from a specific file
 }
 
 // ---------------------------------------------------------------------------

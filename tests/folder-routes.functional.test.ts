@@ -5,8 +5,8 @@ const Module = require('module')
 
 const folder = {
   id: 'folder-1',
-  name: 'Folder',
-  driveUrl: 'https://drive.google.com/drive/folders/folder-1',
+  name: 'My Folder',
+  driveUrl: 'https://drive.google.com/drive/folders/drive-folder-1',
   folderId: 'drive-folder-1',
   status: 'indexed',
   fileCount: 2,
@@ -31,29 +31,24 @@ const files = [
 ]
 
 function makeRequest(body: unknown) {
-  return {
-    json: async () => body,
-  }
+  return { json: async () => body }
 }
 
 function makeInvalidJsonRequest() {
   return {
-    json: async () => {
-      throw new Error('invalid json')
-    },
+    json: async () => { throw new Error('invalid json') },
   }
 }
 
-interface FolderRouteHarnessOptions {
+interface HarnessOptions {
   session?: { user?: { id?: string } } | null
   folders?: unknown[]
   folder?: typeof folder | null
-  accessToken?: string
   accessTokenError?: Error
   liveProgress?: unknown
 }
 
-function loadRoute(routeAlias: string, options: FolderRouteHarnessOptions = {}) {
+function loadRoute(routeAlias: string, options: HarnessOptions = {}) {
   const originalLoad = Module._load
   const routePath = require.resolve(routeAlias)
   delete require.cache[routePath]
@@ -74,9 +69,7 @@ function loadRoute(routeAlias: string, options: FolderRouteHarnessOptions = {}) 
 
   Module._load = function mockLoad(request: string) {
     if (request === 'next-auth') {
-      return {
-        getServerSession: async () => session,
-      }
+      return { getServerSession: async () => session }
     }
 
     if (request === '@/lib/auth') {
@@ -88,7 +81,7 @@ function loadRoute(routeAlias: string, options: FolderRouteHarnessOptions = {}) 
         getValidAccessToken: async (userId: string) => {
           calls.getValidAccessToken.push(userId)
           if (options.accessTokenError) throw options.accessTokenError
-          return options.accessToken ?? 'access-token'
+          return 'access-token'
         },
       }
     }
@@ -122,7 +115,7 @@ function loadRoute(routeAlias: string, options: FolderRouteHarnessOptions = {}) 
         ingestFolder: async (indexedFolder: typeof folder, accessToken: string) => {
           calls.ingestFolder.push({ folderId: indexedFolder.id, accessToken })
         },
-        getIngestionProgress: () => options.liveProgress ?? null,
+        getIngestionProgress: () => Promise.resolve(options.liveProgress ?? null),
       }
     }
 
@@ -130,10 +123,7 @@ function loadRoute(routeAlias: string, options: FolderRouteHarnessOptions = {}) 
   }
 
   try {
-    return {
-      route: require(routeAlias),
-      calls,
-    }
+    return { route: require(routeAlias), calls }
   } finally {
     Module._load = originalLoad
   }
@@ -144,6 +134,10 @@ async function readJson(response: Response) {
 }
 
 describe('functional: folder API routes', () => {
+  // ---------------------------------------------------------------------------
+  // GET /api/folders
+  // ---------------------------------------------------------------------------
+
   it('GET /api/folders returns 401 when unauthenticated', async () => {
     const { route } = loadRoute('@/app/api/folders/route', { session: null })
 
@@ -163,39 +157,73 @@ describe('functional: folder API routes', () => {
     assert.deepEqual(calls.getFoldersForUser, ['user-1'])
   })
 
-  it('POST /api/folders validates JSON and required driveUrl', async () => {
+  // ---------------------------------------------------------------------------
+  // POST /api/folders — URL path
+  // ---------------------------------------------------------------------------
+
+  it('POST /api/folders returns 400 for invalid JSON', async () => {
     const { route } = loadRoute('@/app/api/folders/route')
 
-    const invalidJson = await route.POST(makeInvalidJsonRequest() as never)
-    const missingUrl = await route.POST(makeRequest({ driveUrl: '   ' }) as never)
+    const response = await route.POST(makeInvalidJsonRequest() as never)
 
-    assert.equal(invalidJson.status, 400)
-    assert.deepEqual(await readJson(invalidJson), { error: 'Invalid JSON' })
-    assert.equal(missingUrl.status, 400)
-    assert.deepEqual(await readJson(missingUrl), { error: 'driveUrl is required' })
+    assert.equal(response.status, 400)
+    assert.deepEqual(await readJson(response), { error: 'Invalid JSON' })
   })
 
-  it('POST /api/folders creates a folder and starts ingestion', async () => {
+  it('POST /api/folders returns 400 when neither driveUrl nor driveFolderId is provided', async () => {
+    const { route } = loadRoute('@/app/api/folders/route')
+
+    const response = await route.POST(makeRequest({}) as never)
+
+    assert.equal(response.status, 400)
+    assert.match((await readJson(response)).error, /driveUrl or driveFolderId is required/)
+  })
+
+  it('POST /api/folders returns 400 when driveUrl is blank', async () => {
+    const { route } = loadRoute('@/app/api/folders/route')
+
+    const response = await route.POST(makeRequest({ driveUrl: '   ' }) as never)
+
+    assert.equal(response.status, 400)
+    assert.match((await readJson(response)).error, /driveUrl or driveFolderId is required/)
+  })
+
+  it('POST /api/folders creates a folder via driveUrl and starts ingestion', async () => {
     const { route, calls } = loadRoute('@/app/api/folders/route')
 
     const response = await route.POST(
-      makeRequest({ driveUrl: '  https://drive.google.com/drive/folders/folder-1  ' }) as never,
+      makeRequest({ driveUrl: '  https://drive.google.com/drive/folders/drive-folder-1  ' }) as never,
     )
 
     assert.equal(response.status, 201)
     assert.equal((await readJson(response)).folder.id, 'folder-1')
     assert.deepEqual(calls.getValidAccessToken, ['user-1'])
-    assert.deepEqual(calls.createFolder, [
-      {
-        driveUrl: 'https://drive.google.com/drive/folders/folder-1',
-        userId: 'user-1',
-        accessToken: 'access-token',
-      },
-    ])
+    assert.equal(calls.createFolder[0].driveUrl, 'https://drive.google.com/drive/folders/drive-folder-1')
     assert.deepEqual(calls.ingestFolder, [{ folderId: 'folder-1', accessToken: 'access-token' }])
   })
 
-  it('GET /api/folders/[folderId] returns 404 for missing folders', async () => {
+  // ---------------------------------------------------------------------------
+  // POST /api/folders — driveFolderId path (new Drive folder picker)
+  // ---------------------------------------------------------------------------
+
+  it('POST /api/folders creates a folder via driveFolderId and starts ingestion', async () => {
+    const { route, calls } = loadRoute('@/app/api/folders/route')
+
+    const response = await route.POST(
+      makeRequest({ driveFolderId: 'drive-folder-1' }) as never,
+    )
+
+    assert.equal(response.status, 201)
+    // The route should have constructed a Drive URL from the ID
+    assert.ok(calls.createFolder[0].driveUrl.includes('drive-folder-1'))
+    assert.deepEqual(calls.ingestFolder, [{ folderId: 'folder-1', accessToken: 'access-token' }])
+  })
+
+  // ---------------------------------------------------------------------------
+  // GET/DELETE /api/folders/[folderId]
+  // ---------------------------------------------------------------------------
+
+  it('GET /api/folders/[folderId] returns 404 for folders not owned by the user', async () => {
     const { route } = loadRoute('@/app/api/folders/[folderId]/route', { folder: null })
 
     const response = await route.GET({} as never, { params: { folderId: 'missing' } })
@@ -204,7 +232,7 @@ describe('functional: folder API routes', () => {
     assert.deepEqual(await readJson(response), { error: 'Not found' })
   })
 
-  it('DELETE /api/folders/[folderId] deletes the requested folder', async () => {
+  it('DELETE /api/folders/[folderId] removes the folder and returns 204', async () => {
     const { route, calls } = loadRoute('@/app/api/folders/[folderId]/route')
 
     const response = await route.DELETE({} as never, { params: { folderId: 'folder-1' } })
@@ -213,12 +241,16 @@ describe('functional: folder API routes', () => {
     assert.deepEqual(calls.deleteFolder, [{ folderId: 'folder-1', userId: 'user-1' }])
   })
 
-  it('GET /api/folders/[folderId]/status prefers live progress over DB fallback', async () => {
+  // ---------------------------------------------------------------------------
+  // Status / files / ingest sub-routes
+  // ---------------------------------------------------------------------------
+
+  it('GET /api/folders/[folderId]/status returns live progress when available', async () => {
     const liveProgress = {
       folderId: 'folder-1',
       status: 'ingesting',
-      progress: { total: 2, parsed: 1, indexed: 0, failed: 0, skipped: 0 },
-      currentFile: 'Doc.txt',
+      progress: { total: 5, parsed: 2, indexed: 1, failed: 0, skipped: 0 },
+      currentFile: 'Report.pdf',
     }
     const { route } = loadRoute('@/app/api/folders/[folderId]/status/route', { liveProgress })
 

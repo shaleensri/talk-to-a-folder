@@ -29,7 +29,9 @@ function chatLabel(folderIds: string[], allFolders: IndexedFolder[]): string {
 }
 
 export function Sidebar({ folders, isLoading, onReindex, onDelete }: SidebarProps) {
-  const { sidebarCollapsed, toggleSidebar, setAddFolderModalOpen } = useUIStore()
+  const { setAddFolderModalOpen } = useUIStore()
+  const sidebarCollapsed = false
+  const toggleSidebar = () => {}
   const { tabs, activeTabId, addTab, closeTab, setActiveTabId } = useChatStore()
   const [searchQuery, setSearchQuery] = useState('')
   const [newChatOpen, setNewChatOpen] = useState(false)

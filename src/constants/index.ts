@@ -11,8 +11,8 @@ export const CHUNK_OVERLAP_CHARS = 200                // ~50 tokens
 // Retrieval
 // ---------------------------------------------------------------------------
 
-export const TOP_K_RETRIEVAL = 8              // chunks retrieved from vector store
-export const TOP_K_CONTEXT = 5               // chunks passed to LLM
+export const TOP_K_RETRIEVAL = 20             // chunks retrieved from vector store
+export const TOP_K_CONTEXT = 8               // chunks passed to LLM
 export const MIN_RELEVANCE_SCORE = 0.30      // below this = likely off-topic
 export const UNSUPPORTED_SCORE_THRESHOLD = 0.20 // below all chunks → "unsupported" answer
 

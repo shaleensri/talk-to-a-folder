@@ -1,18 +1,21 @@
 'use client'
 
 import { useState, useRef, useCallback, KeyboardEvent } from 'react'
-import { ArrowUp, Square } from 'lucide-react'
+import { ArrowUp, Square, X, Quote } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { AnimatedBorder } from '@/components/ui/AnimatedBorder'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import type { QuotedContext } from '@/types'
 
 interface ChatComposerProps {
-  onSend: (message: string) => void
+  onSend: (message: string, sourceFileId?: string) => void
   onStop?: () => void
   isLoading: boolean
   disabled?: boolean
   placeholder?: string
+  quotedText?: QuotedContext | null
+  onClearQuote?: () => void
 }
 
 export function ChatComposer({
@@ -21,6 +24,8 @@ export function ChatComposer({
   isLoading,
   disabled,
   placeholder = 'Ask a question about your folder…',
+  quotedText,
+  onClearQuote,
 }: ChatComposerProps) {
   const [input, setInput] = useState('')
   const [focused, setFocused] = useState(false)
@@ -29,13 +34,22 @@ export function ChatComposer({
   const handleSend = useCallback(() => {
     const trimmed = input.trim()
     if (!trimmed || isLoading) return
-    onSend(trimmed)
+
+    // Prepend quoted text as a block-quote so the model sees the selection context.
+    // Pass sourceFileId separately so the server can pin retrieval to that file.
+    const finalMessage = quotedText
+      ? `> ${quotedText.text}\n\n${trimmed}`
+      : trimmed
+
+    onSend(finalMessage, quotedText?.fileId)
     setInput('')
+    onClearQuote?.()
+
     // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
-  }, [input, isLoading, onSend])
+  }, [input, isLoading, onSend, quotedText, onClearQuote])
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -59,6 +73,34 @@ export function ChatComposer({
   return (
     <div className="px-4 pb-5 pt-2">
       <div className="max-w-3xl mx-auto">
+        {/* Quoted text block */}
+        <AnimatePresence>
+          {quotedText && (
+            <motion.div
+              key="quote"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.15 }}
+              className="overflow-hidden mb-2"
+            >
+              <div className="flex items-start gap-2 rounded-xl bg-zinc-800/60 border border-zinc-700/50 px-3 py-2">
+                <Quote className="w-3 h-3 text-zinc-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-zinc-400 leading-relaxed flex-1 line-clamp-3">
+                  {quotedText?.text}
+                </p>
+                <button
+                  onClick={onClearQuote}
+                  className="text-zinc-600 hover:text-zinc-300 transition-colors flex-shrink-0 mt-0.5"
+                  title="Remove quoted text"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <AnimatedBorder active={focused && !disabled}>
           <div
             className={cn(

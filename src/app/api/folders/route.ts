@@ -39,9 +39,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json<ApiResponse<never>>({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  if (!body.driveUrl?.trim()) {
+  // Accept either a Drive URL (legacy) or a raw folder ID (from the Drive folder picker)
+  const driveUrl = body.driveUrl?.trim()
+    || (body.driveFolderId?.trim()
+      ? `https://drive.google.com/drive/folders/${body.driveFolderId.trim()}`
+      : undefined)
+
+  if (!driveUrl) {
     return NextResponse.json<ApiResponse<never>>(
-      { error: 'driveUrl is required' },
+      { error: 'driveUrl or driveFolderId is required' },
       { status: 400 },
     )
   }
@@ -56,7 +62,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const folder = await createFolder(
-      body.driveUrl.trim(),
+      driveUrl,
       session.user.id,
       accessToken,
     )

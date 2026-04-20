@@ -1,7 +1,8 @@
 'use client'
 
-import { FolderOpen, Plus, LogIn } from 'lucide-react'
+import { FolderOpen, Plus, LogIn, BookOpen } from 'lucide-react'
 import Image from 'next/image'
+import Link from 'next/link'
 import { useUIStore } from '@/store/ui-store'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -35,6 +36,18 @@ export function TopBar({ user, onSignIn, onSignOut }: TopBarProps) {
 
       {/* Right — Actions */}
       <div className="flex items-center gap-2">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link
+              href="/"
+              className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-md border border-zinc-800 text-zinc-500 hover:border-zinc-700 hover:text-zinc-300 transition-colors"
+            >
+              <BookOpen className="w-3 h-3" />
+              <span className="hidden sm:inline">About</span>
+            </Link>
+          </TooltipTrigger>
+          <TooltipContent>Features &amp; how it works</TooltipContent>
+        </Tooltip>
         {user ? (
           <>
             <Tooltip>

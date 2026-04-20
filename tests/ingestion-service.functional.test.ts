@@ -61,6 +61,8 @@ function loadIngestionService(options: IngestionHarnessOptions = {}) {
     upsert: [] as unknown[][],
   }
 
+  let storedProgressJson: string | null = null
+
   const parseFile = options.parseFile ?? (async () => ({ content: 'Parsed content' }))
   const chunkText = options.chunkText ?? ((content: string, fileId: string, folderId: string) => [
     {
@@ -75,6 +77,19 @@ function loadIngestionService(options: IngestionHarnessOptions = {}) {
   ])
 
   Module._load = function mockLoad(request: string) {
+    if (request === 'openai') {
+      class MockOpenAI {
+        chat = {
+          completions: {
+            create: async () => ({
+              choices: [{ message: { content: 'A short summary.' } }],
+            }),
+          },
+        }
+      }
+      return MockOpenAI
+    }
+
     if (request === '@/lib/file-parsers') {
       return {
         parseFile: async (file: ReturnType<typeof makeFile>, accessToken: string) => {
@@ -129,7 +144,20 @@ function loadIngestionService(options: IngestionHarnessOptions = {}) {
     }
 
     if (request === '@/lib/prisma') {
-      return { prisma: {} }
+      return {
+        prisma: {
+          driveFile: {
+            update: async () => {},
+          },
+          indexedFolder: {
+            update: async (args: { data?: { progressJson?: string } }) => {
+              if (args.data?.progressJson != null) storedProgressJson = args.data.progressJson
+            },
+            findUnique: async () =>
+              storedProgressJson != null ? { progressJson: storedProgressJson } : null,
+          },
+        },
+      }
     }
 
     return originalLoad.apply(this, arguments as unknown as [string, unknown, boolean])
@@ -224,7 +252,10 @@ describe('functional: ingestion service', () => {
     })
     assert.equal((finalFolderUpdate?.extra as { lastIndexed: Date }).lastIndexed instanceof Date, true)
 
-    assert.deepEqual(service.getIngestionProgress('folder-1'), {
+    // Allow fire-and-forget setProgress promises to settle
+    await new Promise((r) => setTimeout(r, 0))
+
+    assert.deepEqual(await service.getIngestionProgress('folder-1'), {
       folderId: 'folder-1',
       status: 'indexed',
       progress: {
@@ -249,9 +280,13 @@ describe('functional: ingestion service', () => {
     assert.deepEqual(finalFolderUpdate?.extra, {
       errorMessage: 'Folder not found on Google Drive. It may have been deleted or moved. You can remove it here.',
     })
-    assert.equal(service.getIngestionProgress('folder-1')?.status, 'error')
+    // Allow fire-and-forget setProgress promises to settle
+    await new Promise((r) => setTimeout(r, 0))
+
+    const progress = await service.getIngestionProgress('folder-1')
+    assert.equal(progress?.status, 'error')
     assert.equal(
-      service.getIngestionProgress('folder-1')?.errorMessage,
+      progress?.errorMessage,
       'Folder not found on Google Drive. It may have been deleted or moved. You can remove it here.',
     )
   })

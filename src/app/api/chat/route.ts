@@ -121,6 +121,7 @@ export async function POST(req: NextRequest) {
           (token) => {
             send({ type: 'token', payload: token })
           },
+          body.sourceFileId,
         )
 
         // After streaming completes, send structured data
