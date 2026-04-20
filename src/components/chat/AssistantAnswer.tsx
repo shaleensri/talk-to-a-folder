@@ -146,7 +146,7 @@ function InlineSources({ citations }: { citations: Citation[] }) {
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
             className="overflow-hidden"
           >
-            <div className="mt-2 space-y-1.5">
+            <div className="mt-2 space-y-1.5 overflow-x-hidden">
               {citations.map((citation) => (
                 <SourceCard key={citation.id} citation={citation} />
               ))}

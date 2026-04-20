@@ -125,7 +125,7 @@ export function SourceCard({ citation, mimeType }: SourceCardProps) {
             className="overflow-hidden"
           >
             <div className="border-t border-zinc-800/60 px-3 pb-3 pt-2.5">
-              <p className="text-xs text-zinc-400 leading-relaxed">
+              <p className="text-xs text-zinc-400 leading-relaxed break-words overflow-hidden">
                 <HighlightedText
                   text={citation.chunkText}
                   highlight={citation.highlightText}

@@ -68,7 +68,14 @@ async function rewriteQuery(
       messages: [
         {
           role: 'system',
-          content: `You are a search query rewriter for a document assistant. Given a conversation history and the user's latest message, rewrite the message into a single fully self-contained search query that includes all necessary context (file names, topics, specific items mentioned earlier). If the message is already self-contained, return it unchanged. Output ONLY the rewritten query — no explanation, no quotes.`,
+          content: `You are a search query rewriter for a document assistant. Given a conversation history and the user's latest message, rewrite the message into a single fully self-contained search query that includes all necessary context (file names, topics, specific items mentioned earlier).
+
+CRITICAL RULES:
+- If the user explicitly states a number, name, or identifier (e.g. "question 35", "section 3", "page 10"), ALWAYS preserve it exactly — never replace it with a number or name from the conversation history.
+- Only pull context from history to fill in what is MISSING from the user's message, not to override what they said.
+- If the message is already self-contained, return it unchanged.
+
+Output ONLY the rewritten query — no explanation, no quotes.`,
         },
         ...recentHistory.map((m) => ({ role: m.role, content: m.content })),
         { role: 'user', content: query },
@@ -403,6 +410,55 @@ async function retrieveSingleFile(
 }
 
 // ---------------------------------------------------------------------------
+// Keyword search — used as a fallback for numbered item queries
+// (e.g. "question 35", "section 4.2") where cosine similarity fails because
+// all chunks look semantically identical (e.g. exam questions).
+// Searches TextChunk.text directly for the number pattern.
+// ---------------------------------------------------------------------------
+
+async function keywordSearchNumberedItem(
+  query: string,
+  folderIds: string[],
+): Promise<RetrievedChunk[]> {
+  // Extract a number from patterns like "question 35", "q35", "item 12", "section 4"
+  const match = query.match(/\b(?:question|q|item|section|problem|exercise|number|#)\s*(\d+)\b/i)
+    ?? query.match(/\b(\d+)\b/)
+
+  if (!match) return []
+  const num = match[1]
+
+  // Search for chunks containing the number followed by a period and space —
+  // the standard format for numbered lists and exam questions: "35. Which of..."
+  // PDF chunks often have no newlines between questions, so we match " 35. " (space-prefixed).
+  const chunks = await prisma.textChunk.findMany({
+    where: {
+      folderId: { in: folderIds },
+      OR: [
+        { text: { contains: ` ${num}. ` } },   // " 35. " — most common in PDFs
+        { text: { contains: `\n${num}. ` } },   // newline before (structured docs)
+        { text: { startsWith: `${num}. ` } },   // starts with "35. " (first chunk)
+      ],
+    },
+    select: {
+      id: true, text: true, folderId: true, fileId: true, chunkIndex: true,
+      file: { select: { name: true } },
+    },
+    take: 5,
+  })
+
+  return chunks.map((c, i) => ({
+    chunkId: c.id,
+    fileId: c.fileId,
+    fileName: c.file.name,
+    folderId: c.folderId,
+    text: c.text,
+    score: 0.99, // boost keyword matches to the top
+    rank: i + 1,
+    selected: true,
+  }))
+}
+
+// ---------------------------------------------------------------------------
 // targeted_fact: cosine similarity with spread fallback (original behavior)
 // ---------------------------------------------------------------------------
 
@@ -413,13 +469,16 @@ async function retrieveTargetedFact(
   startMs: number,
   intent: QueryIntent,
 ): Promise<RetrievalResult> {
+  // Run cosine similarity and keyword search in parallel
   const queryEmbedding = await embeddings.embed(query)
-
   const fetchK = isMultiFolder ? TOP_K_RETRIEVAL * 2 : TOP_K_RETRIEVAL
-  const matches = await vectorStore.query(queryEmbedding, fetchK, { folderIds })
+  const [matches, keywordChunks] = await Promise.all([
+    vectorStore.query(queryEmbedding, fetchK, { folderIds }),
+    keywordSearchNumberedItem(query, folderIds),
+  ])
   const retrievalLatencyMs = Date.now() - startMs
 
-  const allChunks: RetrievedChunk[] = matches.map((match, i) => ({
+  const cosineChunks: RetrievedChunk[] = matches.map((match, i) => ({
     chunkId: match.id,
     fileId: match.metadata.fileId,
     fileName: match.metadata.fileName,
@@ -429,6 +488,11 @@ async function retrieveTargetedFact(
     rank: i + 1,
     selected: false,
   }))
+
+  // Merge keyword matches at the front (score 0.99), deduplicating by chunkId
+  const cosineIds = new Set(cosineChunks.map((c) => c.chunkId))
+  const newKeywordChunks = keywordChunks.filter((c) => !cosineIds.has(c.chunkId))
+  const allChunks: RetrievedChunk[] = [...newKeywordChunks, ...cosineChunks]
 
   const topScore = allChunks[0]?.score ?? 0
   let selectedChunks: RetrievedChunk[]

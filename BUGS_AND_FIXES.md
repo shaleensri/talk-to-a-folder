@@ -697,6 +697,132 @@ Replaced the static string with a short `gpt-4o-mini` call using a system prompt
 
 ---
 
+## 36. 429 token limit error on large PDFs for specific questions
+
+**Symptom**
+Asking "what does question 35 ask" on a 32-page exam PDF returned a 429 error: "30,819 tokens requested, limit 30,000".
+
+**Root cause**
+The intent classifier routed "what does question 35 ask" to `single_file_deep`, which fetched ALL chunks for the file (~68 chunks × ~450 tokens = ~30k tokens) — far exceeding OpenAI's TPM limit. The classifier was treating any question that mentioned a specific item in a named file as a deep-dive request.
+
+**Fix**
+Two changes:
+1. Tightened the classifier prompt: `single_file_deep` now only triggers for full-file overview requests ("explain everything in…", "walk me through…"). Any specific fact/detail — even from a named file — routes to `targeted_fact` instead. Added explicit "when in doubt, targeted_fact" rule.
+2. Replaced `getAllChunksForFile()` with `vectorStore.queryFile(queryEmbedding, fileId, MAX_SINGLE_FILE_CHUNKS)` in `retrieveSingleFile`. Caps at 15 chunks by cosine similarity to the query, then re-sorts by chunk index for document order. Keeps context under ~7k tokens.
+
+```typescript
+// src/lib/retrieval.ts
+const MAX_SINGLE_FILE_CHUNKS = 15
+const topMatches = await vectorStore.queryFile(queryEmbedding, fileId, MAX_SINGLE_FILE_CHUNKS)
+const matches = [...topMatches].sort((a, b) => (a.metadata.chunkIndex ?? 0) - (b.metadata.chunkIndex ?? 0))
+```
+
+---
+
+## 37. Query rewriter overriding explicit identifiers with history context
+
+**Symptom**
+After asking about question 25, asking "what about question 35" returned the answer for question 25 instead of 35.
+
+**Root cause**
+The query rewriter received the full conversation history (which mentioned question 25 heavily) and rewrote "what about question 35" incorporating that context — producing something like "what about question 25 in the HS Business Administration exam" — overriding the explicit "35" the user stated.
+
+**Fix**
+Added CRITICAL RULES to the rewriter system prompt: explicit numbers, names, and identifiers stated by the user must always be preserved exactly. Context from history should only fill in what is *missing* from the user's message, never override what they said.
+
+```
+CRITICAL RULES:
+- If the user explicitly states a number, name, or identifier (e.g. "question 35"),
+  ALWAYS preserve it exactly — never replace it with a number from conversation history.
+- Only pull context from history to fill in what is MISSING from the user's message.
+```
+
+---
+
+## 38. Keyword search newline pattern didn't match PDF chunk text
+
+**Symptom**
+Even after adding keyword search for numbered items, "what is question 35" still returned "not in the provided excerpt". The model correctly admitted it couldn't find Q35 (bug 37 fix working) but retrieval still missed the chunk.
+
+**Root cause**
+PDF chunks are stored as a single blob of text with spaces between questions: `"...D. new products 35. Which of the following..."`. The keyword search patterns `\n35.` and `\n35 ` never matched because there are no newlines between questions in PDF-extracted text.
+
+**Fix**
+Changed patterns to match the actual PDF format — space-prefixed number followed by period and space:
+```typescript
+OR: [
+  { text: { contains: ` ${num}. ` } },   // " 35. " — matches mid-blob PDF format
+  { text: { contains: `\n${num}. ` } },   // newline before (structured docs)
+  { text: { startsWith: `${num}. ` } },   // starts with "35. " (first chunk)
+]
+```
+
+---
+
+## 39. Sources dropdown causing horizontal overflow in chat panel
+
+**Symptom**
+When expanding the "N sources" toggle under an assistant message, the right chat panel grew wider and caused horizontal overflow. Closing sources fixed it.
+
+**Root cause**
+The expanded source card contained long unbroken exam question text (e.g. `"24. Which of the following is NOT a capital resource: A. Warehouse B. Manufacturing plant C. Assembly line..."`). This text had no natural word-break points and no overflow constraint, pushing the container wider than the panel.
+
+**Fix**
+Added `overflow-x-hidden` to the sources list container in `AssistantAnswer.tsx` and `break-words overflow-hidden` to the chunk text paragraph in `SourceCard.tsx`.
+
+---
+
+## 40. Drag handles stayed attached to cursor after mouse release
+
+**Symptom**
+After dragging a panel divider and releasing the mouse, the panel continued resizing as the cursor moved. Moving the cursor left or right kept adjusting the panel width even without holding the button.
+
+**Root cause**
+Event listeners were created inside `useCallback` closures on `handleLeftDragStart` / `handleRightDragStart`. Each call to these functions added new `mousemove` and `mouseup` listeners to `window`. If `leftPanelWidth` changed (which happens on every mousemove), React re-created the callback, and a second mousedown would add a second set of listeners referencing different closure instances. The `removeEventListener` call only removed the latest listener — older stacked listeners kept firing.
+
+**Fix**
+Moved all `window` event listeners into a single `useEffect` (added once, cleaned up on unmount). Drag start state is stored in `useRef` so the persistent handlers always read current values without stale closures:
+
+```typescript
+const leftDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+
+useEffect(() => {
+  const onMouseMove = (e: MouseEvent) => {
+    if (leftDragRef.current) { /* update width from ref */ }
+  }
+  const onMouseUp = () => {
+    if (leftDragRef.current) { leftDragRef.current = null; setIsDraggingLeft(false) }
+  }
+  window.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('mouseup', onMouseUp)
+  return () => {
+    window.removeEventListener('mousemove', onMouseMove)
+    window.removeEventListener('mouseup', onMouseUp)
+  }
+}, [setLeftPanelWidth, setRightPanelWidth])
+```
+
+---
+
+## 41. DOCX/Google Docs viewer showing invisible text and broken formatting
+
+**Symptom**
+DOCX files rendered in the document viewer had light/invisible text against the white paper background, broken tables, and incorrect indentation. Some documents were entirely unreadable.
+
+**Root cause**
+mammoth's HTML conversion strips or misinterprets Word's internal styles. Inline color styles from Word (e.g. white text on a dark shape) are preserved as `color: #ffffff` but render against the white paper background making text invisible. Table borders, column widths, and indentation levels from Word's XML are either dropped or approximated incorrectly.
+
+**Fix**
+Replaced mammoth → HTML rendering entirely for the viewer with a Google Drive iframe:
+```
+https://drive.google.com/file/d/{driveFileId}/preview
+```
+Google's own renderer handles all colors, tables, fonts, and indentation correctly. The iframe uses the user's existing Google browser session (they're always logged in via OAuth). mammoth is still used in the ingestion pipeline for text extraction — only the viewer changed.
+
+Also extended iframe rendering to Google Sheets, Google Slides, PPTX, XLS, and legacy .doc formats — all now preview via Google's renderer rather than server-side conversion.
+
+---
+
 ## Summary
 
 | # | Area | Type | Impact |
@@ -736,3 +862,9 @@ Replaced the static string with a short `gpt-4o-mini` call using a system prompt
 | 33 | Deployment | Stale progressJson not cleared | Polling stopped early, file count showed wrong number |
 | 34 | Deployment | Neon autosuspend killing connections | PostgreSQL connection errors in production |
 | 35 | UI / LLM | Static off-topic response | All small talk got identical robotic reply |
+| 36 | Retrieval | Token limit exceeded on large PDFs | 429 error on specific questions about large files |
+| 37 | Retrieval / Query rewriter | Rewriter overriding explicit identifiers | Follow-up "question 35" answered with question 25 content |
+| 38 | Retrieval | Keyword search newline pattern didn't match PDF chunks | Specific numbered questions not found even with keyword search |
+| 39 | UI / Layout | Sources dropdown causing horizontal overflow | Right panel pushed wider when sources expanded |
+| 40 | UI / Layout | Drag handles stayed attached to cursor after mouseup | Panels continued moving after releasing mouse |
+| 41 | Viewer | DOCX/Google Docs rendering colors/tables incorrectly | Invisible text, broken tables, wrong indentation in document viewer |

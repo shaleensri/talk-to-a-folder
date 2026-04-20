@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useUIStore } from '@/store/ui-store'
 import { useChatStore } from '@/store/chat-store'
 import { FileTreePanel } from '@/components/layout/FileTreePanel'
@@ -57,50 +57,45 @@ export function MainWorkspace({ allFolders, folderFiles, onReindex, onDelete }: 
   const [isDraggingLeft, setIsDraggingLeft] = useState(false)
   const [isDraggingRight, setIsDraggingRight] = useState(false)
 
-  const handleLeftDragStart = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      setIsDraggingLeft(true)
-      const startX = e.clientX
-      const startWidth = leftPanelWidth
+  // Refs hold drag state so event handlers added once via useEffect
+  // always read current values — no stale closures, no listener stacking.
+  const leftDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const rightDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
-      const onMouseMove = (e: MouseEvent) => {
-        const delta = e.clientX - startX
-        setLeftPanelWidth(Math.max(LEFT_MIN, Math.min(LEFT_MAX, startWidth + delta)))
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (leftDragRef.current) {
+        const { startX, startWidth } = leftDragRef.current
+        setLeftPanelWidth(Math.max(LEFT_MIN, Math.min(LEFT_MAX, startWidth + (e.clientX - startX))))
       }
-      const onMouseUp = () => {
-        setIsDraggingLeft(false)
-        window.removeEventListener('mousemove', onMouseMove)
-        window.removeEventListener('mouseup', onMouseUp)
+      if (rightDragRef.current) {
+        const { startX, startWidth } = rightDragRef.current
+        setRightPanelWidth(Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, startWidth - (e.clientX - startX))))
       }
-      window.addEventListener('mousemove', onMouseMove)
-      window.addEventListener('mouseup', onMouseUp)
-    },
-    [leftPanelWidth, setLeftPanelWidth],
-  )
+    }
+    const onMouseUp = () => {
+      if (leftDragRef.current) { leftDragRef.current = null; setIsDraggingLeft(false) }
+      if (rightDragRef.current) { rightDragRef.current = null; setIsDraggingRight(false) }
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [setLeftPanelWidth, setRightPanelWidth])
 
-  const handleRightDragStart = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      setIsDraggingRight(true)
-      const startX = e.clientX
-      const startWidth = rightPanelWidth
+  const handleLeftDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    leftDragRef.current = { startX: e.clientX, startWidth: leftPanelWidth }
+    setIsDraggingLeft(true)
+  }, [leftPanelWidth])
 
-      const onMouseMove = (e: MouseEvent) => {
-        // Dragging left → right panel grows; dragging right → right panel shrinks
-        const delta = e.clientX - startX
-        setRightPanelWidth(Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, startWidth - delta)))
-      }
-      const onMouseUp = () => {
-        setIsDraggingRight(false)
-        window.removeEventListener('mousemove', onMouseMove)
-        window.removeEventListener('mouseup', onMouseUp)
-      }
-      window.addEventListener('mousemove', onMouseMove)
-      window.addEventListener('mouseup', onMouseUp)
-    },
-    [rightPanelWidth, setRightPanelWidth],
-  )
+  const handleRightDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    rightDragRef.current = { startX: e.clientX, startWidth: rightPanelWidth }
+    setIsDraggingRight(true)
+  }, [rightPanelWidth])
 
   const isDragging = isDraggingLeft || isDraggingRight
 

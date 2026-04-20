@@ -22,8 +22,18 @@ Live: [talk-to-a-folder-seven.vercel.app](https://talk-to-a-folder-seven.vercel.
 - Intent classification (gpt-4o-mini) routes each query to the right strategy: broad summary, single file deep dive, cross-folder comparison, or targeted fact retrieval
 - Per-file LLM summaries stored at index time for fast overview queries
 - Cosine similarity search with spread fallback for broad questions
-- Query rewriting resolves follow-up pronouns ("that file", "tell me more") before retrieval
+- Query rewriter (gpt-4o-mini, always-on) expands follow-ups into self-contained queries — preserves explicit identifiers (e.g. "question 35" never gets replaced by prior context)
+- `single_file_deep` capped at 15 most-relevant chunks via `queryFile()` to prevent token limit errors on large files
+- Keyword search fallback for numbered items (question N, section N) runs in parallel with cosine similarity — handles uniform documents like exam papers
+- Anti-hallucination rule: model admits when a specific numbered item isn't in retrieved chunks rather than substituting a different one
 - Transparent assumption display when the system makes an interpretation call
+
+**Document viewer**
+- 3-column resizable layout: file tree | document viewer | chat
+- Left panel: folder tree with expand/collapse, click file to preview, re-index per folder, add/delete folders
+- Center panel: full document preview — plain text, Markdown, PDF (react-pdf with page nav + zoom), CSV/Excel (sortable table with filter), Google Docs / DOCX / Sheets / Slides / PPTX (Google Drive iframe — perfect colors, tables, fonts)
+- "Open in Google" button in every file's header — routes to Docs/Sheets/Slides editor or Drive viewer
+- Right panel: chat with dropdown to switch between chats, folder context pills (add/remove folders per chat), inline collapsible sources per answer
 
 **File support**
 | Format | Parser |
@@ -46,11 +56,11 @@ Files over 20 MB are skipped with a visible error in the Files panel.
 **UI**
 - SSE streaming with real-time token display
 - Inline citation badges that sync with source cards on hover
-- Sources, Files, and Debug tabs in the right panel
-- Drag-to-resize panel divider
+- Collapsible inline sources under each assistant message
+- All three panels drag-to-resize with min/max bounds
 - Staleness badge on folder cards (> 24h since last index)
 - File error tooltips on hover in the Files panel
-- Multi-tab chat — each folder combination has its own tab; switching back restores the conversation
+- Chat dropdown to switch between all chats; only one chat visible at a time
 - Chat history persisted in DB and restored on page reload
 
 **Deployment**
@@ -91,6 +101,9 @@ src/
 │   │   │       ├── ingest/route.ts    POST trigger (waitUntil)
 │   │   │       ├── status/route.ts    GET progress (DB-backed)
 │   │   │       └── files/route.ts     GET file list
+│   │   ├── files/[fileId]/
+│   │   │   ├── preview/route.ts       GET renderable content (text/html/pdf/table)
+│   │   │   └── preview/raw/route.ts   GET raw PDF stream for react-pdf
 │   │   └── sessions/route.ts          GET recent sessions (history restore)
 │   ├── globals.css
 │   ├── layout.tsx
@@ -98,7 +111,8 @@ src/
 │   └── providers.tsx
 │
 ├── components/
-│   ├── layout/        AppShell, TopBar, Sidebar, MainWorkspace, IntroAnimation
+│   ├── layout/        AppShell, TopBar, MainWorkspace, FileTreePanel, IntroAnimation
+│   ├── viewer/        DocumentViewer, PdfViewer, TableViewer
 │   ├── chat/          ChatPanel, ChatComposer, MessageList, AssistantAnswer, CitationBadge
 │   ├── folders/       AddFolderModal, FolderCard, FolderList, FolderStatusPill, IngestionProgress
 │   ├── sources/       SourcesPanel, SourceTabs, SourceCard, FolderTree, DebugPanel
