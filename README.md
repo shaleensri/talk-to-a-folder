@@ -2,230 +2,221 @@
 
 A RAG (Retrieval-Augmented Generation) web app that connects to a Google Drive folder and lets you have a grounded, cited conversation with its contents. Ask questions, get summaries, compare documents — all with inline citations pointing back to the exact source.
 
-Live: [talk-to-a-folder-seven.vercel.app](https://talk-to-a-folder-seven.vercel.app)
+**Live:** [talk-to-a-folder-seven.vercel.app](https://talk-to-a-folder-seven.vercel.app)
 
 ---
 
 ## What it does
 
-1. **Sign in** with Google OAuth
-2. **Paste a Google Drive folder link** — the app lists all supported files including subfolders
-3. **Index** — files are parsed, chunked, embedded, and stored
-4. **Chat** — ask questions; answers stream back with inline citation markers `[1][2][3]`
-5. **Inspect** — hover citations to highlight source cards; open the Debug tab to see chunk scores
+1. Sign in with Google OAuth
+2. Paste a Google Drive folder link — the app recursively crawls all files including subfolders
+3. Files are parsed, chunked, embedded, and indexed — with an LLM summary generated per file
+4. Ask questions in natural language — answers stream back with inline citation markers `[1][2][3]`
+5. Hover citations to highlight the source card; open the Debug tab to see cosine scores and retrieval latency
 
 ---
 
-## Features
+## How to run
 
-**Smart retrieval**
-- Intent classification (gpt-4o-mini) routes each query to the right strategy: broad summary, single file deep dive, cross-folder comparison, or targeted fact retrieval
-- Per-file LLM summaries stored at index time for fast overview queries
-- Cosine similarity search with spread fallback for broad questions
-- Query rewriter (gpt-4o-mini, always-on) expands follow-ups into self-contained queries — preserves explicit identifiers (e.g. "question 35" never gets replaced by prior context)
-- `single_file_deep` capped at 15 most-relevant chunks via `queryFile()` to prevent token limit errors on large files
-- Keyword search fallback for numbered items (question N, section N) runs in parallel with cosine similarity — handles uniform documents like exam papers
-- Anti-hallucination rule: model admits when a specific numbered item isn't in retrieved chunks rather than substituting a different one
-- Transparent assumption display when the system makes an interpretation call
+The app is live at [talk-to-a-folder-seven.vercel.app](https://talk-to-a-folder-seven.vercel.app). Sign in with a Google account that has access to a Drive folder and paste the folder link to get started.
 
-**Document viewer**
-- 3-column resizable layout: file tree | document viewer | chat
-- Left panel: folder tree with expand/collapse, click file to preview, re-index per folder, add/delete folders
-- Center panel: full document preview — plain text, Markdown, PDF (react-pdf with page nav + zoom), CSV/Excel (sortable table with filter), Google Docs / DOCX / Sheets / Slides / PPTX (Google Drive iframe — perfect colors, tables, fonts)
-- "Open in Google" button in every file's header — routes to Docs/Sheets/Slides editor or Drive viewer
-- Right panel: chat with dropdown to switch between chats, folder context pills (add/remove folders per chat), inline collapsible sources per answer
+To run locally, clone the repo, copy `.env.local.example` to `.env.local`, fill in your Google OAuth credentials, OpenAI API key, and PostgreSQL connection string, then:
 
-**File support**
-| Format | Parser |
-|--------|--------|
-| Google Docs | Drive API export |
-| Google Sheets | Drive API export → CSV |
-| PDF | pdf-parse |
-| Plain text / Markdown / CSV | passthrough |
-| Word (.docx) | mammoth |
-| Excel (.xlsx) | SheetJS |
-| PowerPoint (.pptx) | officeparser |
+```bash
+npm install
+npx prisma db push
+npm run dev
+```
 
-Files over 20 MB are skipped with a visible error in the Files panel.
-
-**Multi-folder chat**
-- Add multiple folders to a single chat tab
-- Balanced retrieval across folders (minimum representation per folder)
-- Each chunk labeled `[Folder: Name]` in cross-folder answers
-
-**UI**
-- SSE streaming with real-time token display
-- Inline citation badges that sync with source cards on hover
-- Collapsible inline sources under each assistant message
-- All three panels drag-to-resize with min/max bounds
-- Staleness badge on folder cards (> 24h since last index)
-- File error tooltips on hover in the Files panel
-- Chat dropdown to switch between all chats; only one chat visible at a time
-- Chat history persisted in DB and restored on page reload
-
-**Deployment**
-- Hosted on Vercel (Hobby plan)
-- PostgreSQL via Neon (free tier)
-- Progress tracking stored in DB (serverless-safe, no shared memory)
-- `waitUntil` keeps Lambda alive through full ingestion
+A mock mode is available with no credentials required:
+```bash
+NEXT_PUBLIC_MOCK_MODE=true npm run dev
+```
 
 ---
 
 ## Tech stack
 
-| Layer | Choice |
-|-------|--------|
-| Framework | Next.js 14 App Router |
-| Auth | NextAuth v4 + Google OAuth |
-| Database | Prisma + PostgreSQL (Neon) |
-| Embeddings | OpenAI `text-embedding-3-small` |
-| LLM | OpenAI `gpt-4o` + `gpt-4o-mini` |
-| UI | Tailwind CSS + shadcn/ui + Framer Motion |
-| State | Zustand |
-| Hosting | Vercel |
+| Layer | Choice | Why |
+|-------|--------|-----|
+| Framework | Next.js 14 App Router | Full-stack in one repo — API routes colocated with UI, deploys to Vercel in one command |
+| Auth | NextAuth v4 + Google OAuth | Handles token refresh, session persistence, and the Drive OAuth scope out of the box |
+| Database | Prisma + PostgreSQL (Neon) | Serverless-compatible, free tier, works with Vercel's ephemeral functions |
+| Embeddings | OpenAI `text-embedding-3-small` | 1536 dimensions, cheap at scale ($0.00002/1K tokens) |
+| LLM — routing | OpenAI `gpt-4o-mini` | Fast and cheap for intent classification and query rewriting (~$0.0002/call) |
+| LLM — answers | OpenAI `gpt-4o` | Reserved for final answer generation where quality matters |
+| UI | Tailwind CSS + shadcn/ui + Framer Motion | Rapid component development with consistent design language |
+| State | Zustand | Lightweight, no boilerplate, supports tab-scoped state per chat session |
+| Hosting | Vercel | Zero-config deploys, `waitUntil` keeps background ingestion alive |
 
 ---
 
-## File structure
+## Architecture
+
+### Ingest (one-time per folder)
 
 ```
-src/
-├── app/
-│   ├── api/
-│   │   ├── auth/[...nextauth]/
-│   │   ├── chat/route.ts              SSE streaming endpoint
-│   │   ├── folders/
-│   │   │   ├── route.ts               GET list, POST create
-│   │   │   └── [folderId]/
-│   │   │       ├── route.ts           GET, DELETE
-│   │   │       ├── ingest/route.ts    POST trigger (waitUntil)
-│   │   │       ├── status/route.ts    GET progress (DB-backed)
-│   │   │       └── files/route.ts     GET file list
-│   │   ├── files/[fileId]/
-│   │   │   ├── preview/route.ts       GET renderable content (text/html/pdf/table)
-│   │   │   └── preview/raw/route.ts   GET raw PDF stream for react-pdf
-│   │   └── sessions/route.ts          GET recent sessions (history restore)
-│   ├── globals.css
-│   ├── layout.tsx
-│   ├── page.tsx
-│   └── providers.tsx
-│
-├── components/
-│   ├── layout/        AppShell, TopBar, MainWorkspace, FileTreePanel, IntroAnimation
-│   ├── viewer/        DocumentViewer, PdfViewer, TableViewer
-│   ├── chat/          ChatPanel, ChatComposer, MessageList, AssistantAnswer, CitationBadge
-│   ├── folders/       AddFolderModal, FolderCard, FolderList, FolderStatusPill, IngestionProgress
-│   ├── sources/       SourcesPanel, SourceTabs, SourceCard, FolderTree, DebugPanel
-│   └── ui/            TiltCard, LoadingDots, shadcn components
-│
-├── hooks/
-│   ├── useChat.ts          SSE stream reader, sessionId persistence
-│   ├── useFolders.ts
-│   ├── useFolder.ts
-│   ├── useTabFolders.ts    Multi-folder file list for active tab
-│   ├── useIngestion.ts
-│   └── useSourceHighlight.ts
-│
-├── lib/
-│   ├── retrieval.ts        Intent classifier + 4 retrieval strategies
-│   ├── answer-generator.ts GPT-4o, prompts per intent, confidence scoring
-│   ├── vector-store.ts     Prisma/PostgreSQL vector backend (cosine in-app)
-│   ├── chunker.ts          1800 chars / 200 overlap
-│   ├── embeddings.ts       text-embedding-3-small
-│   ├── google-drive.ts     Recursive folder walk, subfolder support
-│   ├── google-auth.ts      Auto token refresh
-│   ├── auth.ts
-│   ├── prisma.ts
-│   └── file-parsers/       index, google-doc, google-sheet, pdf, plain-text, word, excel, powerpoint
-│
-├── services/
-│   ├── folder-service.ts   CRUD + updateFolderStatus (clears progressJson on change)
-│   ├── ingestion-service.ts parse → chunk → embed → index → summarize pipeline
-│   └── chat-service.ts     Query rewriting, retrieval + generation, history injection
-│
-├── store/
-│   ├── chat-store.ts       tabs[], activeTabId, loadFromHistory
-│   └── ui-store.ts         panel state, modal state, citation highlight
-│
-├── types/                  Barrel export from index.ts
-└── constants/
-    ├── index.ts            Limits, thresholds, model names
-    └── animations.ts       Framer Motion variants
+Google Drive  →  Parse  →  Chunk (1800c / 200 overlap)  →  Embed  →  PostgreSQL
+(Drive API)     pdf/docx                                   3-small    chunks +
+                xlsx/csv                                              embeddings
+                gsheet/txt
+                   │
+                   └─ gpt-4o-mini per file → LLM Summary → PostgreSQL
 ```
+
+Ingestion runs as a fire-and-forget background job using Vercel's `waitUntil` so the HTTP response returns immediately while parsing continues. Progress is polled from the DB every 1.5 seconds and shown as a live progress bar.
+
+### Query (every question)
+
+```
+User question
+     │
+     ▼
+Query Rewriter (gpt-4o-mini)  ←── last 6 messages of conversation history
+     │  resolves "that file" / "tell me more about it" into self-contained queries
+     ▼
+Intent Classifier (gpt-4o-mini)
+     │
+     ├─ targeted_fact      → cosine similarity over all chunks (top-K)
+     ├─ broad_summary      → pre-generated file summaries (all files, no vector search)
+     ├─ single_file_deep   → all chunks for the named file (up to 15, queryFile())
+     └─ cross_folder_cmp   → balanced multi-folder retrieval with per-folder minimums
+                                      │
+                                      ▼
+                              GPT-4o Answer Generator
+                                      │
+                                      ▼
+                              SSE stream → Answer [1][2][3]
+```
+
+Two models, two jobs: `gpt-4o-mini` handles cheap routing and rewriting; `gpt-4o` handles quality generation.
 
 ---
 
-## Local setup
+## Features
 
-### Prerequisites
-- Node.js 18+
-- Google Cloud project with Drive API + OAuth 2.0 (`drive.readonly` scope)
-- OpenAI API key
-- PostgreSQL database (Neon free tier works)
+### Smart retrieval pipeline
 
-### Install & run
+- **Intent classification** — gpt-4o-mini classifies each query into one of four strategies before retrieval even starts. A "summarize everything" question and a "what is the payment term" question are routed completely differently.
+- **Query rewriting** — follow-up questions like "tell me more about that file" resolve to self-contained queries using conversation history, before hitting the embedding model. Preserves explicit identifiers ("question 35", "section 4") so they are never mangled by the rewriter.
+- **Per-file LLM summaries** — generated at index time using gpt-4o-mini. Broad summary queries use these directly — every file is represented without cosine search being involved at all.
+- **Single file deep dive** — if the classifier identifies a question about one specific file, retrieval is pinned to that file's chunks (`queryFile()`) up to 15 chunks, preventing token limit errors on large files.
+- **Cross-folder comparison** — multiple folders can be added to one chat tab. Retrieval balances chunks across folders with a guaranteed minimum per folder. Answers label each chunk `[Folder: Name]`.
+- **Keyword search fallback** — runs in parallel with cosine similarity for numbered references ("question 35", "section 3.1") — handles uniform documents like exam papers where all chunks embed to similar vectors.
+- **Anti-hallucination guard** — the model is explicitly instructed to admit when a specific numbered item is not in the retrieved chunks rather than substituting a different one.
+- **Assumption display** — when the system makes an interpretation call (e.g. routing "explain the report" to `Report.pdf`), a visible note tells the user what assumption was made.
 
-```bash
-npm install
-cp .env.local.example .env.local
-# fill in credentials
-npx prisma db push
-npm run dev
-```
+### Document viewer
 
-### Environment variables
+- Three-column resizable layout: file tree | document viewer | chat. All three dividers are drag-to-resize with min/max bounds.
+- **PDF** — rendered with react-pdf, page navigation, zoom in/out
+- **CSV / Excel** — sortable, filterable table. Excel files show a sheet picker for multi-sheet workbooks.
+- **DOCX / PPTX** — converted to HTML via mammoth / officeparser, rendered inline. Color and background-color styles stripped to prevent invisible text on dark backgrounds.
+- **Google Docs / Sheets / Slides** — embedded as an authenticated Drive iframe for perfect formatting, fonts, and tables.
+- **Plain text / Markdown** — rendered directly.
+- "Open in Google" button on every file — routes to the appropriate Google editor.
 
-```
-NEXTAUTH_URL=http://localhost:3000
-NEXTAUTH_SECRET=<openssl rand -base64 32>
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-OPENAI_API_KEY=
-DATABASE_URL=postgresql://...?sslmode=require
-NEXT_PUBLIC_MOCK_MODE=false
-```
+### Text selection → ask chat
 
-### Demo mode (no credentials)
+Select any text in the document viewer, and a popover appears with two options:
+- **Ask chat** — the selected text is quoted in the chat composer, and the file's ID is pinned to the retrieval call so the answer is grounded in that specific document. If multiple chat tabs are open for the folder, a submenu lets you choose which tab receives the quote.
+- **Copy** — copies to clipboard.
 
-```bash
-NEXT_PUBLIC_MOCK_MODE=true npm run dev
-```
+Google Docs/Sheets/Slides render in a cross-origin iframe, so text selection is unavailable. For DOCX files, a "Enable text selection" toggle re-fetches the file as plain HTML so selection works.
 
-Full UI with simulated ingestion, streaming, and citations. No API keys needed.
+### Chat
+
+- SSE streaming — tokens appear in real time
+- Inline citation badges that sync with source cards on hover
+- Collapsible source panel under each assistant message showing chunk text, file name, and cosine score
+- Debug tab showing retrieval latency, total chunks retrieved, selected chunk IDs, and scores
+- Multiple chat tabs — each tab can hold multiple folders
+- Folder context pills on each tab — add or remove folders without creating a new chat
+- Chat history persisted to the DB and restored on page reload
+- Rate limiting: 20 questions/user/60 seconds
+
+### Ingestion
+
+- Recursive folder crawl up to 5 levels deep including subfolders
+- Files over 20 MB skipped with a visible error in the Files panel
+- Legacy formats (`.doc`, `.ppt`) flagged with a clear conversion message rather than a cryptic parser error
+- Image-only PDFs and scanned documents marked as skipped with reason shown
+- Re-index per folder — deduplicates by Drive file ID so re-indexing doesn't create duplicate rows
+- Staleness badge on folder cards when last index is more than 24 hours ago
+- Google OAuth access token auto-refreshed using stored refresh token (1-hour expiry handled transparently)
+- Google Drive export API failures retried once after 2 seconds
+
+### File formats supported
+
+| Format | Parser |
+|--------|--------|
+| Google Docs | Drive API HTML export |
+| Google Sheets | Drive API CSV export |
+| PDF | pdf-parse |
+| Word (.docx) | mammoth |
+| Excel (.xlsx) | SheetJS |
+| PowerPoint (.pptx) | officeparser |
+| Plain text / Markdown / CSV | passthrough |
 
 ---
 
-## Production deployment (Vercel + Neon)
+## Notable bugs found and fixed
 
-1. Create a Neon project and copy the **pooled** connection string
-2. Run `npx prisma db push` against Neon
-3. `vercel` — follow prompts, link GitHub repo
-4. Add env vars in Vercel dashboard (use pooled Neon URL for `DATABASE_URL`)
-5. Add `https://your-app.vercel.app/api/auth/callback/google` to Google OAuth redirect URIs
-6. `vercel --prod`
+These are real bugs discovered during development, not hypothetical cases.
+
+| # | Bug | Root cause | Fix |
+|---|-----|-----------|-----|
+| 1 | Re-indexing doubled the file count in the DB | `nanoid()` generated a new ID for every Drive file on every crawl; Prisma treated each as a new insert | Look up existing rows by `driveFileId` before upsert; reuse existing DB IDs |
+| 2 | "Index now" button never appeared after a failed index | Button only rendered when `status === 'error'`; failed-with-no-files returned `status === 'indexed'` | Flip: show button whenever `status !== 'ingesting'` |
+| 3 | Re-index spinner never stopped | POST /ingest returns 202 immediately; component assumed indexing was done | Poll `GET /status` every 1.5 seconds until `indexed` or `error`, then stop |
+| 4 | "Couldn't find evidence" on all questions | `MIN_RELEVANCE_SCORE = 0.65` calibrated for ada-002; `text-embedding-3-small` scores 0.35–0.50 for good matches | Recalibrate to `0.30` |
+| 5 | Confidence always showed "Low" | Same threshold mismatch — `high ≥ 0.85` never reachable with 3-small | Recalibrate: `high ≥ 0.60`, `medium ≥ 0.45` |
+| 6 | Follow-up questions had no memory of prior answers | `useChat.ts` never sent `sessionId`; server created a new session every request | Read and persist `sessionId` from Zustand; send on every request |
+| 7 | Broad questions ("summarize everything") used only one file | Cosine similarity clustered on the highest-scoring file; other files never appeared | Spread strategy: below score threshold, pick best chunk per unique file |
+| 8 | Summarization still showed one section of one file | Spread strategy still cosine-based; one file dominated; wrong system prompt told model to be "concise and cite" | Bypass cosine: fetch `chunkIndex=0` from every file. Use summarization-specific system prompt. |
+| 9 | Follow-up questions ("that file") failed retrieval | Pronouns embed to generic vectors with no connection to prior conversation | Query rewriting: gpt-4o-mini resolves references using last 6 messages before retrieval |
+| 10 | Google access token expired mid-session | App read `access_token` directly from DB without checking expiry | `getValidAccessToken()` checks expiry (60s buffer), auto-refreshes via refresh token |
+| 11 | `.pptx` parser always crashed | `officeparser` v6 renamed `parseOfficeAsync` → `parseOffice`; now returns AST with `.toText()` | Update call; call `.toText()` on result |
+| 12 | `.doc` / `.ppt` files gave confusing library errors | OLE2 binary format fed to OOXML parser | Throw early with "convert to .docx/.pptx" message |
+| 13 | Chat history lost on page reload | `ChatSession` had no `userId`; store was pure in-memory Zustand | Added `userId` to schema, `GET /api/sessions`, `loadFromHistory` action in store, hydration on sign-in |
+| 14 | Source dots hidden by scroll bar | Fixed panel width with no resize | Drag-to-resize panel dividers |
+| 15 | `setActiveFolderId is not a function` crash | Zustand action removed during multi-tab refactor; import reference not updated | Replace with `addTab` at all call sites |
+| 16 | `messages is not iterable` on page load | `SourceTabs` read flat `messages` from store; refactor moved messages inside tab objects | Read from `tabs.find(activeTabId).messages` |
+| 17 | Invisible text in DOCX previews | mammoth preserves `color: white` / `background-color: black` from Word documents | Strip `color` and `background-color` from all inline styles in the HTML output |
+| 18 | Hooks called inside JSX caused compile error | `useTransform` from Framer Motion called inside a `style` prop expression | Move `useTransform` calls to component top level |
 
 ---
 
-## What's not done yet
+## Future improvements
 
-| Gap | Notes |
-|-----|-------|
-| pgvector | Embeddings stored as JSON strings; cosine computed in-app. For scale: swap to pgvector on Neon — one-file change in `vector-store.ts` |
-| Ingestion timeout on large folders | Hobby plan: 30s limit. Large folders (50+ files) may not complete. Upgrade to Vercel Pro for 300s |
-| Additional file formats | No image OCR, no email (.eml), no HTML |
-| Sharing / collaboration | All folders are private to the authenticated user |
+**Quick wins (one-file changes)**
+- **pgvector** — swap `vector-store.ts` to use PostgreSQL's native vector type. Cosine similarity moves from in-app JavaScript to an indexed DB operation. One schema migration, one query change.
+- **Streaming ingestion progress** — replace DB polling with SSE so the progress bar updates in real time.
+- **Re-index single file** — button on each file row to re-parse and re-embed just that file.
+- **Image OCR** — pass images through GPT-4 Vision at index time; currently image-only PDFs are skipped.
+
+**Meaningful features**
+- **Hybrid search** — combine cosine similarity with BM25 keyword search. Better recall for names, codes, and exact phrases that cosine misses.
+- **Re-ranking** — retrieve top-20 with cosine, re-rank with a cross-encoder, send top-5 to GPT-4o. Better precision without increasing token cost.
+- **Incremental ingestion** — subscribe to Drive push notifications (webhooks) and re-embed only changed files. Currently a full re-index is required.
+- **Chunk size per file type** — 1800 characters is right for prose, wrong for spreadsheets (one row = one chunk) and code. Detect and apply format-specific chunking strategies.
+- **Folder sharing** — all folders are private to the authenticated user. A share link would give read-only chat access without requiring the recipient to authenticate with Drive.
+
+**Architectural**
+- **Multi-modal indexing** — index slide decks as images, not just extracted text. Charts and diagrams are invisible to the current text pipeline.
+- **Write-back** — upgrade from `drive.readonly` to `drive` scope, enable "suggest edits to this document" mode.
 
 ---
 
 ## Tests
 
 ```bash
-npm test                  # all tests
-npm run test:unit         # pure helpers, chunking, parser cleanup
-npm run test:functional   # mocked API routes, services, retrieval, answer generator
-npm run test:smoke        # file/API/service structure checks
-npm run test:blackbox     # public behavior of store and parsers
-npm run test:integration  # real Prisma queries against a test DB
+npm run test:unit         # pure helpers, chunking, parser cleanup (29 tests)
+npm run test:functional   # mocked API routes, services, retrieval, answer generator (92 tests)
+npm run test:smoke        # file/API/service structure and export checks (7 tests)
+npm run test:integration  # real Prisma queries against a test DB (requires DATABASE_URL)
 ```
 
-Current status: 128 tests (92 functional + 29 unit + 7 smoke), 0 failures. Integration tests require a real PostgreSQL DB (`DATABASE_URL` set).
+**128 tests, 0 failures** (functional + unit + smoke).
+
+Tests use Node.js's built-in test runner with no additional framework. Module dependencies are mocked via `Module._load` interception and `require.cache` injection — the latter is necessary for modules that use relative imports or dynamic `await import()` calls, which `Module._load` cannot intercept after it has been restored.
