@@ -126,11 +126,9 @@ describe('functional: file parser dispatcher', () => {
       ['text/markdown', 'plain-text'],
       ['text/csv', 'plain-text'],
       ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'word'],
-      ['application/msword', 'word'],
       ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'excel'],
       ['application/vnd.ms-excel', 'excel'],
       ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'powerpoint'],
-      ['application/vnd.ms-powerpoint', 'powerpoint'],
     ] as const
 
     for (const [mimeType, parserName] of cases) {
@@ -142,6 +140,15 @@ describe('functional: file parser dispatcher', () => {
       assert.equal(calls.exportGoogleFile.length, 0)
       assert.equal(calls.parser[0].name, parserName)
     }
+  })
+
+  it('throws a helpful error for legacy application/msword files', async () => {
+    const { module } = loadDispatcher()
+
+    await assert.rejects(
+      () => module.parseFile(makeFile('application/msword'), 'token'),
+      /\.doc is an old Word format/,
+    )
   })
 
   it('throws for unsupported MIME types', async () => {
