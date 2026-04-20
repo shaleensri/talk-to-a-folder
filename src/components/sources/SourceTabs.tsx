@@ -15,7 +15,8 @@ interface SourceTabsProps {
 }
 
 export function SourceTabs({ folderFiles }: SourceTabsProps) {
-  const { rightPanelTab, setRightPanelTab } = useUIStore()
+  const rightPanelTab = 'sources'
+  const setRightPanelTab = (_: string) => {}
   const { tabs, activeTabId } = useChatStore()
   const activeTab = tabs.find((t) => t.id === activeTabId)
   const messages = activeTab?.messages ?? []

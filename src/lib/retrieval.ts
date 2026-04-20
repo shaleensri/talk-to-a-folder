@@ -31,6 +31,58 @@ interface ClassifiedIntent {
 // Falls back to targeted_fact on any error
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Query rewriter — expands ambiguous follow-ups into self-contained queries
+// Only rewrites when the query looks like a follow-up (short or pronoun-heavy)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Query rewriter — turns every user message into a self-contained search query.
+//
+// Problem: vector search works by embedding the query and finding similar chunks.
+// A follow-up like "whats the correct answer" or "can you explain why that's right"
+// embeds poorly — the vector has no idea what "that" or "correct answer" refers to.
+// Result: wrong chunks are retrieved, and the answer is wrong or says "not found".
+//
+// Fix: before embedding, send the last few conversation turns + the user's message
+// to gpt-4o-mini and ask it to rewrite into one fully self-contained query.
+// "whats the correct answer" → "what is the correct answer for question 35 in the
+// HS Business Administration Core Sample Exam"
+//
+// If the query is already self-contained the LLM returns it unchanged, so this is
+// always safe to run. Runs in parallel with intent classification so it adds no
+// latency to the critical path.
+// ---------------------------------------------------------------------------
+
+async function rewriteQuery(
+  query: string,
+  history: { role: 'user' | 'assistant'; content: string }[],
+): Promise<string> {
+  if (history.length === 0) return query
+
+  try {
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const recentHistory = history.slice(-4)
+    const res = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a search query rewriter for a document assistant. Given a conversation history and the user's latest message, rewrite the message into a single fully self-contained search query that includes all necessary context (file names, topics, specific items mentioned earlier). If the message is already self-contained, return it unchanged. Output ONLY the rewritten query — no explanation, no quotes.`,
+        },
+        ...recentHistory.map((m) => ({ role: m.role, content: m.content })),
+        { role: 'user', content: query },
+      ],
+      temperature: 0,
+      max_tokens: 80,
+    })
+    const rewritten = res.choices[0]?.message?.content?.trim()
+    return rewritten && rewritten.length > 0 ? rewritten : query
+  } catch {
+    return query
+  }
+}
+
 async function classifyIntent(
   query: string,
   history: { role: 'user' | 'assistant'; content: string }[],
@@ -47,12 +99,13 @@ async function classifyIntent(
 
 Intents:
 - broad_summary: wants an overview of the whole folder or all files (e.g. "what's in this folder", "summarize everything", "describe all files", "analyze the documents", "walk me through", "give me an overview", "explain what's here", "what do I have")
-- single_file_deep: asks about one specific named file (e.g. "what does Interview uncle.docx say", "tell me about the Q3 report", "explain the resume file", "what's in the M&M lab doc")
+- single_file_deep: wants a full, comprehensive explanation of one specific named file — NOT a specific fact from it (e.g. "summarize the Q3 report", "explain everything in the resume file", "walk me through the M&M lab doc", "what is the whole contract about"). Only use this when the user wants broad coverage of the entire file, not a specific detail.
 - cross_folder_compare: wants to compare content across multiple folders (e.g. "compare these folders", "how do they differ", "what's different between them", "similarities between folders")
-- targeted_fact: any question about the subject matter, content, or implications of the documents — even if phrased analytically, evaluatively, or subjectively (e.g. "what were the revenue projections", "who wrote the memo", "what is the conclusion about X", "when did Y happen", "what are my chances", "how strong is this proposal", "what would an investor think", "how should I prepare", "what are the risks", "is this a good plan")
+- targeted_fact: any specific question about content, facts, or details in the documents — including questions about a specific item within a named file (e.g. "what were the revenue projections", "who wrote the memo", "what does question 35 ask", "what is question 50 about", "what does section 3 say", "what are the risks", "what are my chances", "how strong is this proposal"). Use this whenever the user wants a specific piece of information, even if they mention a file name.
 - off_topic: ONLY for pure small talk or greetings with zero relation to documents or their content (e.g. "sup", "hey", "thanks", "how are you", "lol", "ok", "cool", "what's 2+2"). If there is ANY chance the question relates to the documents or their subject matter, do NOT classify as off_topic — use targeted_fact instead.
 
 IMPORTANT: When in doubt between targeted_fact and off_topic, always choose targeted_fact.
+IMPORTANT: When in doubt between single_file_deep and targeted_fact, always choose targeted_fact. single_file_deep is only for "explain the whole file" requests.
 
 Respond with JSON only: {"intent": "<intent>", "targetFileName": "<extracted file name or key phrase if single_file_deep, otherwise null>"}`,
         },
@@ -199,8 +252,12 @@ export async function retrieve(
   const startMs = Date.now()
   const isMultiFolder = folderIds.length > 1
 
-  // Classify intent before doing any retrieval
-  const { intent, targetFileName } = await classifyIntent(query, history, isMultiFolder)
+  // Rewrite follow-up queries and classify intent in parallel
+  const [rewrittenQuery, { intent, targetFileName }] = await Promise.all([
+    rewriteQuery(query, history),
+    classifyIntent(query, history, isMultiFolder),
+  ])
+  const effectiveQuery = rewrittenQuery
 
   // Off-topic: skip retrieval entirely
   if (intent === 'off_topic') {
@@ -225,16 +282,16 @@ export async function retrieve(
 
   // Route to the correct retrieval strategy
   if (intent === 'broad_summary' || intent === 'cross_folder_compare') {
-    return retrieveBroadSummary(query, folderIds, intent, startMs)
+    return retrieveBroadSummary(effectiveQuery, folderIds, intent, startMs)
   }
 
   if (intent === 'single_file_deep') {
     const fileId = targetFileName ? await findFileByName(targetFileName, folderIds) : null
     if (fileId) {
-      return retrieveSingleFile(query, fileId, folderIds, startMs, targetFileName)
+      return retrieveSingleFile(effectiveQuery, fileId, folderIds, startMs, targetFileName)
     }
     // File not found by name — fall back to cosine similarity with an assumption note
-    const fallback = await retrieveTargetedFact(query, folderIds, isMultiFolder, startMs, 'targeted_fact')
+    const fallback = await retrieveTargetedFact(effectiveQuery, folderIds, isMultiFolder, startMs, 'targeted_fact')
     if (targetFileName) {
       fallback.assumption = `Couldn't find a file matching "${targetFileName}" — searching across all documents instead. Try using the exact file name if you meant a specific file.`
     }
@@ -242,7 +299,7 @@ export async function retrieve(
   }
 
   // targeted_fact (or single_file_deep fallback)
-  return retrieveTargetedFact(query, folderIds, isMultiFolder, startMs, intent)
+  return retrieveTargetedFact(effectiveQuery, folderIds, isMultiFolder, startMs, intent)
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +340,10 @@ async function retrieveBroadSummary(
 // single_file_deep: all chunks for one specific file
 // ---------------------------------------------------------------------------
 
+// Max chunks to pass for a single-file deep dive.
+// At ~450 tokens/chunk this keeps the context under ~7k tokens, well within any tier limit.
+const MAX_SINGLE_FILE_CHUNKS = 15
+
 async function retrieveSingleFile(
   query: string,
   fileId: string,
@@ -290,7 +351,15 @@ async function retrieveSingleFile(
   startMs: number,
   matchedFileName?: string,
 ): Promise<RetrievalResult> {
-  const matches = await vectorStore.getAllChunksForFile(fileId)
+  // Query by cosine similarity scoped to this file, capped at MAX_SINGLE_FILE_CHUNKS.
+  // queryFile handles embedding, scoring, and sorting — results come back sorted by score.
+  const queryEmbedding = await embeddings.embed(query)
+  const topMatches = await vectorStore.queryFile(queryEmbedding, fileId, MAX_SINGLE_FILE_CHUNKS)
+
+  // Re-sort by chunk index so the answer reads in document order
+  const matches = [...topMatches].sort(
+    (a, b) => (a.metadata.chunkIndex ?? 0) - (b.metadata.chunkIndex ?? 0),
+  )
 
   const retrievalLatencyMs = Date.now() - startMs
 

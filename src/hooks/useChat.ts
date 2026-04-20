@@ -3,7 +3,6 @@
 import { useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 import { useChatStore } from '@/store/chat-store'
-import { useUIStore } from '@/store/ui-store'
 import { getMockResponse } from '@/lib/mock-data'
 import { generateId } from '@/lib/utils'
 import type { ChatMessage } from '@/types'
@@ -40,7 +39,6 @@ export function useChat(tabId: string | null): UseChatResult {
     setTabStreaming,
     setTabCitations,
   } = useChatStore()
-  const { setRightPanelTab } = useUIStore()
   const abortRef = useRef<AbortController | null>(null)
 
   const activeTab = tabs.find((t) => t.id === tabId) ?? null
@@ -90,7 +88,6 @@ export function useChat(tabId: string | null): UseChatResult {
             debugInfo: mockResponse.debugInfo,
           })
           setTabCitations(tabId, mockResponse.citations)
-          if (mockResponse.citations.length > 0) setRightPanelTab('sources')
         } else {
           // Real API: SSE streaming
           abortRef.current = new AbortController()
@@ -163,7 +160,6 @@ export function useChat(tabId: string | null): UseChatResult {
 
           if (finalCitations && finalCitations.length > 0) {
             setTabCitations(tabId, finalCitations)
-            setRightPanelTab('sources')
           }
         }
       } catch (err) {

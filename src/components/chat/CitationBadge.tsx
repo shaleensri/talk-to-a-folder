@@ -17,15 +17,13 @@ interface CitationBadgeProps {
  * Click → expands + scrolls to the exact chunk in the right panel.
  */
 export function CitationBadge({ citation }: CitationBadgeProps) {
-  const { highlightedCitationId, setHighlightedCitationId, setExpandedSourceId, setRightPanelTab } =
-    useUIStore()
+  const { highlightedCitationId, setHighlightedCitationId, setExpandedSourceId } = useUIStore()
 
   const isHighlighted = highlightedCitationId === citation.id
 
   function handleClick() {
     setExpandedSourceId(citation.id)
-    setRightPanelTab('sources')
-    // Scroll to the source card via its ID
+    // Scroll to the inline source card within the message
     requestAnimationFrame(() => {
       document.getElementById(`source-${citation.id}`)?.scrollIntoView({
         behavior: 'smooth',

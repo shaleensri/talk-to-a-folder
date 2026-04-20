@@ -2,27 +2,24 @@
 
 import { useSession, signIn, signOut } from 'next-auth/react'
 import { useState, useEffect } from 'react'
-import { AnimatePresence } from 'framer-motion'
 import { TopBar } from './TopBar'
-import { Sidebar } from './Sidebar'
 import { MainWorkspace } from './MainWorkspace'
 import { AddFolderModal } from '@/components/folders/AddFolderModal'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { useUIStore } from '@/store/ui-store'
 import { useChatStore } from '@/store/chat-store'
 import { useFolders } from '@/hooks/useFolders'
 import { useTabFolders } from '@/hooks/useTabFolders'
 import { IntroAnimation } from './IntroAnimation'
+import type { IndexedFolder } from '@/types'
 
 const IS_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 
 export function AppShell() {
   const { data: session } = useSession()
-  const { sidebarCollapsed } = useUIStore()
-  const { tabs, activeTabId, closeTab, removeFolderFromTab, loadFromHistory } = useChatStore()
+  const { tabs, closeTab, removeFolderFromTab, loadFromHistory } = useChatStore()
   const [introVisible, setIntroVisible] = useState(true)
 
-  const { folders, isLoading: foldersLoading, refetch: refetchFolders } = useFolders()
+  const { folders, refetch: refetchFolders } = useFolders()
 
   // Restore chat history from DB on first load
   useEffect(() => {
@@ -30,33 +27,27 @@ export function AppShell() {
     fetch('/api/sessions')
       .then((r) => r.json())
       .then((data) => {
-        if (data.sessions?.length) {
-          loadFromHistory(data.sessions)
-        }
+        if (data.sessions?.length) loadFromHistory(data.sessions)
       })
-      .catch(() => {/* silently ignore — history is a nice-to-have */})
+      .catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id])
 
-  // Derive active tab folders for the sources panel
-  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
-  const activeTabFolderIds = activeTab?.folderIds ?? []
-
-  const { folderFiles, refetch: refetchFiles } = useTabFolders(activeTabFolderIds)
+  // Derive active tab folders for file fetching
+  // Fetch files for all folders so FileTreePanel has the full tree.
+  const allFolderIds = folders.map((f) => f.id)
+  const { folderFiles: allFolderFiles, refetch: refetchFiles } = useTabFolders(allFolderIds)
 
   function handleReindex() {
     refetchFolders()
     refetchFiles()
   }
 
-  function handleDelete(folder: { id: string }) {
+  function handleDelete(folder: IndexedFolder) {
     for (const tab of tabs) {
       if (tab.folderIds.includes(folder.id)) {
-        if (tab.folderIds.length === 1) {
-          closeTab(tab.id)
-        } else {
-          removeFolderFromTab(tab.id, folder.id)
-        }
+        if (tab.folderIds.length === 1) closeTab(tab.id)
+        else removeFolderFromTab(tab.id, folder.id)
       }
     }
     refetchFolders()
@@ -76,30 +67,11 @@ export function AppShell() {
         />
 
         <div className="flex flex-1 min-h-0 overflow-hidden">
-          <AnimatePresence>
-            {!sidebarCollapsed && (
-              <Sidebar
-                folders={folders}
-                isLoading={foldersLoading}
-                onReindex={handleReindex}
-                onDelete={handleDelete}
-              />
-            )}
-          </AnimatePresence>
-
-          {sidebarCollapsed && (
-            <button
-              onClick={() => useUIStore.getState().toggleSidebar()}
-              className="w-6 flex items-center justify-center border-r border-zinc-800 hover:bg-zinc-900 transition-colors group"
-              aria-label="Expand sidebar"
-            >
-              <div className="w-1 h-6 rounded-full bg-zinc-700 group-hover:bg-zinc-500 transition-colors" />
-            </button>
-          )}
-
           <MainWorkspace
             allFolders={folders}
-            folderFiles={folderFiles}
+            folderFiles={allFolderFiles}
+            onReindex={handleReindex}
+            onDelete={handleDelete}
           />
         </div>
 

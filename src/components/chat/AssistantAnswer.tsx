@@ -1,12 +1,11 @@
 'use client'
 
-import React, { useMemo } from 'react'
-import { motion } from 'framer-motion'
-import { Sparkles, AlertTriangle } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import React, { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Sparkles, AlertTriangle, ChevronDown } from 'lucide-react'
 import { CitationBadge } from './CitationBadge'
 import { AnswerMetadata } from './AnswerMetadata'
+import { SourceCard } from '@/components/sources/SourceCard'
 import { LoadingDots } from '@/components/ui/LoadingDots'
 import { messageCard } from '@/constants/animations'
 import { cn } from '@/lib/utils'
@@ -120,6 +119,47 @@ function AnswerContent({
   )
 }
 
+// ── Inline sources toggle ───────────────────────────────────────────────────
+
+function InlineSources({ citations }: { citations: Citation[] }) {
+  const [open, setOpen] = useState(false)
+  if (citations.length === 0) return null
+
+  return (
+    <div className="mt-3 border-t border-white/[0.05] pt-2">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 text-[11px] text-zinc-600 hover:text-zinc-400 transition-colors"
+      >
+        <ChevronDown
+          className={cn('w-3 h-3 transition-transform duration-150', open && 'rotate-180')}
+        />
+        {citations.length} {citations.length === 1 ? 'source' : 'sources'}
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-2 space-y-1.5">
+              {citations.map((citation) => (
+                <SourceCard key={citation.id} citation={citation} />
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+// ── Main AssistantAnswer ─────────────────────────────────────────────────────
+
 export function AssistantAnswer({ message }: AssistantAnswerProps) {
   const isUnsupported = message.metadata?.confidence === 'unsupported'
   const isOffTopic = message.metadata?.confidence === 'off_topic'
@@ -181,6 +221,11 @@ export function AssistantAnswer({ message }: AssistantAnswerProps) {
         {/* Metadata — only show when done streaming */}
         {!message.isStreaming && message.metadata && (
           <AnswerMetadata metadata={message.metadata} />
+        )}
+
+        {/* Inline sources — collapsible, only when done streaming */}
+        {!message.isStreaming && (
+          <InlineSources citations={message.citations ?? []} />
         )}
       </div>
     </motion.div>

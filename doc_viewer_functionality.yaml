@@ -1,0 +1,182 @@
+doc viewer fucntionality.
+
+right now we have:
+left tab - 
+- workspace 
+    - chats
+    - folders
+middle tab - 
+    - chat
+    - top bar has folders context for that particular chat. 
+right tab - 
+    - sources tab with sources
+    - files tab with files list
+    - debug tab
+
+new look:
+- make the main middle tab a document viewer
+- whatever files are readable (text, docx, pdf) should be viewable on that middle part. 
+- the left tab will just be folders and indeted inside will the files inside the folders 
+- the right side will be the chat currently we have as the main middle tab. 
+
+details - 
+- the left tab will have the folders with the files indented. each file will be clickable and will open in the doc viewer tab.
+    - reindexing will also take place on this left tab
+    - new chat wont open if user just clicks a folder here. this is just folder viewer and file selector(?) and reindexing
+- the middle tab (doc viewer ) will show file currently opened by user (clicked by). doesnt matter which file the chat is talking about. 
+    - the doc viewer will only work for valid files. for rest display message 
+    - while reading the doc, user can select/highlight certain text that opens a right-click box with options: ask chat, copy.
+        - ask chat option will have a arrow that goes one level deeper. asking user to open already created chat (only ones with this file's folder in its context already) or create a new chat with this folder context. 
+- the right tab will have 'chats' at the top with a dropdown symbol that opens up to all chats. create chat icon on the top or right. 
+    - only one chat opens at one time. can toggle between chats by usig dropdown. 
+    - under chatname, user can see folder context and can add remove folders from context.
+    - when user reaches a chat via selecting/highighting text on document, that text part should be referenced in the chat in same way how claude or chatgpt deal with it. to show user that this text is being referenced.
+
+
+---
+
+REFINED PLAN (updated after design review)
+==========================================
+
+Layout
+------
+Three-column layout replacing the current two-panel split. All three columns are
+resizable by the user (drag handles between columns), each with a min and max width
+so no panel can be collapsed to nothing or expanded to fill the whole screen.
+
+  Left panel   — file tree (folders + files, reindex controls)
+  Center panel — document viewer
+  Right panel  — chat
+
+The existing drag-to-resize divider is extended to support two dividers (left|center
+and center|right). State for all three widths lives in the UI store.
+
+
+Left Panel — File Tree
+----------------------
+- Folders listed vertically. Each folder is expandable to show its files indented beneath.
+- Clicking a file opens it in the center document viewer. Does NOT open or create a chat.
+- Clicking a folder does nothing navigational — folder row only shows the folder name
+  and a Re-index button (same trigger as the current FolderCard re-index).
+- File status indicator (dot) on each file row: indexed / skipped / failed / ingesting.
+  Tooltip on hover showing error if applicable (mirrors current Files panel behavior).
+- "Add folder" button at the top of the left panel (e.g. a + icon in the panel header).
+  Clicking it opens the existing AddFolderModal. Delete folder option stays on the
+  folder row (e.g. a "..." context menu or trash icon on hover).
+- The current Sidebar / FolderCard / FolderList components are replaced by this new
+  FileTreePanel component. The FolderTree component in the sources panel can be reused
+  or adapted as a starting point.
+
+
+Center Panel — Document Viewer
+-------------------------------
+Supported file types (show rendered content):
+  - Plain text (.txt, .md, .csv)        → render as preformatted or markdown
+  - PDF                                  → react-pdf with text layer enabled
+  - Google Docs                          → re-export as plain text or HTML via Drive API,
+                                           render as formatted HTML
+  - DOCX                                 → mammoth server-side → HTML → render in viewer
+                                           (mammoth is already used in ingestion pipeline)
+
+Unsupported types (show message):
+  - Google Sheets, Excel, PowerPoint, image-only PDFs, files > 20 MB (already skipped)
+  - Message: "Preview not available for this file type. You can still ask the chat
+    questions about it."
+
+Default state (no file selected):
+  - Empty state illustration / prompt: "Select a file from the left panel to preview it."
+
+Phase 2 addition (text selection — NOT in Phase 1):
+  - User highlights text in the viewer → mouseup triggers a small popover with two
+    options: "Ask chat" and "Copy".
+  - "Copy" copies the selection to clipboard.
+  - "Ask chat" submenu logic:
+      - Find all chats whose folder context includes the file's parent folder
+        (exact match OR superset — i.e. chats with this folder plus other folders count).
+      - If 0 matches → skip submenu entirely. Auto-create a new chat with this folder
+        as context, drop the selected text in as a quoted reference, and open it.
+        Intent is unambiguous — there's nowhere else to go.
+      - If 1+ matches → always show submenu. Even with one match the user may want
+        to start a fresh chat rather than adding to the existing one. Submenu lists
+        all matching chats by name, with a "New chat (this folder)" option pinned
+        at the bottom.
+      - Selected text appears in the chat composer as a quoted block (grey, styled like
+        Claude/ChatGPT quote references) above the text input. The quoted text is
+        prepended to the outgoing message when sent.
+  - Text selection only works on rendered text content. PDF text layer must be enabled
+    in react-pdf config for selection to work.
+
+
+Right Panel — Chat
+------------------
+Top bar of the right panel (replaces the current tab-based top bar):
+
+  [ Chat name / dropdown ▾ ]  [ + new chat icon ]
+
+  - Clicking the dropdown opens a list of all chats, most recent first.
+  - Clicking a chat in the list switches to it.
+  - The + icon creates a new chat (same flow as current "new tab" behavior).
+  - Only one chat is visible/active at a time.
+
+Directly under the chat name:
+  [ Folder 1 name ] [ Folder 2 name ] [ + add folder ] [ x remove ]
+
+  - Shows the folder(s) in this chat's context as small pills/badges.
+  - User can add a folder (opens folder picker — only already-indexed folders) or
+    remove one by clicking x on the pill.
+  - This replaces the current top-of-chat-panel folder context display.
+
+Body of the right panel:
+  - Message list (same as current ChatPanel / MessageList).
+  - Chat composer at the bottom (same as current ChatComposer).
+  - Phase 2: composer gains a "quoted text" state — when populated, renders a dismissible
+    grey quote block above the input field.
+  - Sources / Debug info: moved into a collapsible section below each assistant message
+    (replaces the current right-panel source tabs), OR kept as a toggle button that
+    expands a drawer at the bottom of the chat panel. Decision: collapsible per-message
+    is cleaner given the right panel is now narrower.
+
+
+Phasing
+-------
+
+Phase 1 — Layout restructure + File Tree + Basic Viewer + Chat Dropdown
+  - New 3-column layout with dual drag-to-resize dividers
+  - Left: FileTreePanel (folder expand/collapse, file click to open, re-index per folder)
+  - Center: DocumentViewer (plain text, Markdown, PDF via react-pdf, Google Docs export)
+  - Right: Chat panel with chat dropdown at top, folder context pills under chat name
+  - All three panels resizable within min/max bounds
+  - No text selection / Ask Chat yet
+  - Sources / debug: decide on collapsible-per-message or bottom drawer
+
+Phase 2 — Text Selection + Ask Chat
+  - Text highlight → popover (Ask chat / Copy)
+  - Smart chat routing (direct if 1 match, submenu if 0 or 2+)
+  - Quoted text reference block in chat composer
+  - Submenu includes: matching chats by name + "New chat (this folder)" option
+
+Phase 3 — Polish + DOCX rendering
+  - DOCX viewer (mammoth → HTML, rendered in right panel with basic styles)
+  - Scroll-to-chunk when citation is clicked (stretch goal — requires matching chunk
+    text to position in rendered document; feasible for text/DOCX, hard for PDF)
+  - Any rough edges from Phase 1/2 cleaned up
+
+
+Technical notes
+---------------
+- react-pdf: install @react-pdf/renderer is the WRONG package. Need pdfjs-dist +
+  react-pdf (the viewer library, not the renderer). Text layer must be enabled for
+  selection to work.
+- mammoth: already a dependency (used in ingestion). For the viewer, call it
+  server-side via a new GET /api/files/[fileId]/preview route that returns HTML.
+  Do not ship mammoth to the client bundle.
+- New API route needed: GET /api/files/[fileId]/preview
+    → fetches file content from Drive (or re-uses parsed text stored in DB/chunks),
+      converts to displayable format (HTML for DOCX, plain text for txt/md,
+      signed URL or streamed bytes for PDF), returns to viewer component.
+- UI store: add openFileId (string | null) and three column widths
+  (leftWidth, centerWidth — rightWidth is derived).
+- Zustand chat store: chats dropdown replaces tabs[] — same data, different UI surface.
+  activeTabId remains the active chat identifier; no schema changes needed.
+- Patterns to follow: zinc-* neutrals, indigo-* accent, no gray-*, all components
+  'use client', server logic in lib/ or app/api/.
