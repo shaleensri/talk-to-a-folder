@@ -228,4 +228,4 @@ npm run test:blackbox     # public behavior of store and parsers
 npm run test:integration  # real Prisma queries against a test DB
 ```
 
-Current status: 49 unit/functional/smoke/blackbox tests + 28 integration tests, 0 failures.
+Current status: 128 tests (92 functional + 29 unit + 7 smoke), 0 failures. Integration tests require a real PostgreSQL DB (`DATABASE_URL` set).
