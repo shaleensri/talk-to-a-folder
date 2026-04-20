@@ -20,18 +20,6 @@ A RAG (Retrieval-Augmented Generation) web app that connects to a Google Drive f
 
 The app is live at [talk-to-a-folder-seven.vercel.app](https://talk-to-a-folder-seven.vercel.app). Sign in with a Google account that has access to a Drive folder and paste the folder link to get started.
 
-To run locally, clone the repo, copy `.env.local.example` to `.env.local`, fill in your Google OAuth credentials, OpenAI API key, and PostgreSQL connection string, then:
-
-```bash
-npm install
-npx prisma db push
-npm run dev
-```
-
-A mock mode is available with no credentials required:
-```bash
-NEXT_PUBLIC_MOCK_MODE=true npm run dev
-```
 
 ---
 
